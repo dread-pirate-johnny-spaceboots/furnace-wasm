@@ -23,6 +23,52 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include <emscripten/html5.h>
+
+static bool furnace_web_resolve_canvas_metrics(int& cssW, int& cssH, int& pixelW, int& pixelH) {
+  static const char* canvasSelector="#furnace-canvas";
+
+  double rawCssW=0.0;
+  double rawCssH=0.0;
+  int rawPixelW=0;
+  int rawPixelH=0;
+
+  bool haveCss=
+    emscripten_get_element_css_size(canvasSelector,&rawCssW,&rawCssH)==EMSCRIPTEN_RESULT_SUCCESS &&
+    rawCssW>0.0 &&
+    rawCssH>0.0;
+  bool havePixel=
+    emscripten_get_canvas_element_size(canvasSelector,&rawPixelW,&rawPixelH)==EMSCRIPTEN_RESULT_SUCCESS &&
+    rawPixelW>0 &&
+    rawPixelH>0;
+
+  if (!haveCss && !havePixel) {
+    return false;
+  }
+
+  double dpr=emscripten_get_device_pixel_ratio();
+  if (dpr<=0.0) dpr=1.0;
+
+  if (!haveCss) {
+    rawCssW=rawPixelW/dpr;
+    rawCssH=rawPixelH/dpr;
+  }
+  if (!havePixel) {
+    rawPixelW=(int)(rawCssW*dpr+0.5);
+    rawPixelH=(int)(rawCssH*dpr+0.5);
+  }
+
+  cssW=(int)(rawCssW+0.5);
+  cssH=(int)(rawCssH+0.5);
+  pixelW=rawPixelW;
+  pixelH=rawPixelH;
+
+  if (cssW<1) cssW=1;
+  if (cssH<1) cssH=1;
+  if (pixelW<1) pixelW=1;
+  if (pixelH<1) pixelH=1;
+  return true;
+}
 
 EM_JS(int, furnace_web_consume_import_state_js, (), {
   if (!Module.furnaceWebConsumeImportState) return 0;
@@ -79,6 +125,42 @@ bool furnaceWebEnabled() {
 #ifdef __EMSCRIPTEN__
   return true;
 #else
+  return false;
+#endif
+}
+
+bool furnaceWebResolveCanvasMetrics(int& cssW, int& cssH, int& pixelW, int& pixelH) {
+#ifdef __EMSCRIPTEN__
+  return furnace_web_resolve_canvas_metrics(cssW,cssH,pixelW,pixelH);
+#else
+  (void)cssW;
+  (void)cssH;
+  (void)pixelW;
+  (void)pixelH;
+  return false;
+#endif
+}
+
+bool furnaceWebResolveCanvasWindowSize(int& w, int& h) {
+#ifdef __EMSCRIPTEN__
+  int pixelW=0;
+  int pixelH=0;
+  return furnace_web_resolve_canvas_metrics(w,h,pixelW,pixelH);
+#else
+  (void)w;
+  (void)h;
+  return false;
+#endif
+}
+
+bool furnaceWebResolveCanvasPixelSize(int& w, int& h) {
+#ifdef __EMSCRIPTEN__
+  int cssW=0;
+  int cssH=0;
+  return furnace_web_resolve_canvas_metrics(cssW,cssH,w,h);
+#else
+  (void)w;
+  (void)h;
   return false;
 #endif
 }

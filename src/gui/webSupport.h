@@ -23,6 +23,9 @@
 #include "../ta-utils.h"
 
 bool furnaceWebEnabled();
+bool furnaceWebResolveCanvasMetrics(int& cssW, int& cssH, int& pixelW, int& pixelH);
+bool furnaceWebResolveCanvasWindowSize(int& w, int& h);
+bool furnaceWebResolveCanvasPixelSize(int& w, int& h);
 int furnaceWebConsumeImportState();
 String furnaceWebConsumeImportMessage();
 bool furnaceWebRequestImport(const char* targetDir, const char* rawFilter, bool allowMultiple);

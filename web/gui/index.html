@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Furnace GUI Web</title>
   <style>
     :root {
@@ -18,18 +18,24 @@
       height: 100%;
       padding: 0;
       overflow: hidden;
+      overscroll-behavior: none;
       background:
         radial-gradient(circle at top, rgba(80, 145, 169, 0.18), transparent 40%),
         linear-gradient(180deg, #0c1216 0%, #090c0f 100%);
     }
 
     body {
-      position: relative;
+      position: fixed;
+      inset: 0;
     }
 
     #shell {
-      position: fixed;
+      position: absolute;
       inset: 0;
+      width: 100vw;
+      width: 100dvw;
+      height: 100vh;
+      height: 100dvh;
       overflow: hidden;
     }
 
@@ -41,6 +47,7 @@
       height: 100%;
       outline: none;
       background: #050607;
+      touch-action: none;
     }
 
     #status {

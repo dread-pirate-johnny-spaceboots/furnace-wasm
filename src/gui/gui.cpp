@@ -76,32 +76,22 @@ extern const char* defaultLayout;
 
 #ifdef __EMSCRIPTEN__
 static bool furnaceWebResolveGuiWindowSize(int& outW, int& outH) {
-  static const char* canvasSelector="#furnace-canvas";
-  double cssW=0.0;
-  double cssH=0.0;
+  return furnaceWebResolveCanvasWindowSize(outW,outH);
+}
 
-  if (emscripten_get_element_css_size(canvasSelector,&cssW,&cssH)!=EMSCRIPTEN_RESULT_SUCCESS) {
-    return false;
-  }
-  if (cssW<=0.0 || cssH<=0.0) {
-    int pixelW=0;
-    int pixelH=0;
-    if (emscripten_get_canvas_element_size(canvasSelector,&pixelW,&pixelH)!=EMSCRIPTEN_RESULT_SUCCESS ||
-        pixelW<=0 || pixelH<=0) {
-      return false;
-    }
-
-    double dpr=emscripten_get_device_pixel_ratio();
-    if (dpr<=0.0) dpr=1.0;
-    cssW=pixelW/dpr;
-    cssH=pixelH/dpr;
+static void furnaceWebApplyImGuiDisplayMetrics() {
+  int cssW=0;
+  int cssH=0;
+  int pixelW=0;
+  int pixelH=0;
+  if (!furnaceWebResolveCanvasMetrics(cssW,cssH,pixelW,pixelH)) {
+    return;
   }
 
-  outW=(int)(cssW+0.5);
-  outH=(int)(cssH+0.5);
-  if (outW<1) outW=1;
-  if (outH<1) outH=1;
-  return true;
+  ImGuiIO& io=ImGui::GetIO();
+  io.DisplaySize=ImVec2((float)pixelW,(float)pixelH);
+  io.DisplayFramebufferScale=ImVec2(1.0f,1.0f);
+  io.InputScale=(cssW>0)?((float)pixelW/(float)cssW):1.0f;
 }
 
 static bool furnaceWebParseLayoutCoordPair(const String& layout, size_t start, int& outX, int& outY, size_t& outEnd) {
@@ -4580,8 +4570,20 @@ bool FurnaceGUI::loopFrame() {
         case SDL_WINDOWEVENT:
           switch (ev.window.event) {
             case SDL_WINDOWEVENT_RESIZED: {
+#ifdef __EMSCRIPTEN__
+              int browserW=ev.window.data1;
+              int browserH=ev.window.data2;
+              if (furnaceWebResolveGuiWindowSize(browserW,browserH)) {
+                scrW=browserW;
+                scrH=browserH;
+              } else {
+                scrW=ev.window.data1;
+                scrH=ev.window.data2;
+              }
+#else
               scrW=ev.window.data1;
               scrH=ev.window.data2;
+#endif
               portrait=(scrW<scrH);
               logV("portrait: %d (%dx%d)",portrait,scrW,scrH);
               logD("window resized to %dx%d",scrW,scrH);
@@ -4801,16 +4803,14 @@ bool FurnaceGUI::loopFrame() {
       int prevScrH=scrH;
       SDL_GetWindowSize(sdlWin,&scrW,&scrH);
 #ifdef __EMSCRIPTEN__
-      if (scrW<=0 || scrH<=0) {
-        int fallbackW=prevScrW;
-        int fallbackH=prevScrH;
-        if (furnaceWebResolveGuiWindowSize(fallbackW,fallbackH)) {
-          scrW=fallbackW;
-          scrH=fallbackH;
-        } else {
-          scrW=prevScrW;
-          scrH=prevScrH;
-        }
+      int browserW=(scrW>0)?scrW:prevScrW;
+      int browserH=(scrH>0)?scrH:prevScrH;
+      if (furnaceWebResolveGuiWindowSize(browserW,browserH)) {
+        scrW=browserW;
+        scrH=browserH;
+      } else if (scrW<=0 || scrH<=0) {
+        scrW=prevScrW;
+        scrH=prevScrH;
       }
 #endif
       if (prevScrW!=scrW || prevScrH!=scrH) {
@@ -5195,6 +5195,9 @@ bool FurnaceGUI::loopFrame() {
 
     rend->newFrame();
     ImGui_ImplSDL2_NewFrame();
+#ifdef __EMSCRIPTEN__
+    furnaceWebApplyImGuiDisplayMetrics();
+#endif
     ImGui::NewFrame();
 
     // one second counter

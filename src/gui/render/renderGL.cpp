@@ -18,6 +18,7 @@
  */
 
 #include "renderGL.h"
+#include "../webSupport.h"
 #include "../../ta-log.h"
 #ifdef USE_GLES
 #include "SDL_opengles2.h"
@@ -63,41 +64,6 @@ PFNGLGETSHADERINFOLOGPROC furGetShaderInfoLog=NULL;
 
 #ifndef USE_GLES
 PFNGLGETGRAPHICSRESETSTATUSARBPROC furGetGraphicsResetStatusARB=NULL;
-#endif
-
-#ifdef __EMSCRIPTEN__
-static bool furnaceWebResolveCanvasSize(int& w, int& h) {
-  static const char* canvasSelector="#furnace-canvas";
-
-  int pixelW=0;
-  int pixelH=0;
-  if (emscripten_get_canvas_element_size(canvasSelector,&pixelW,&pixelH)==EMSCRIPTEN_RESULT_SUCCESS &&
-      pixelW>0 && pixelH>0) {
-    w=pixelW;
-    h=pixelH;
-    return true;
-  }
-
-  double cssW=0.0;
-  double cssH=0.0;
-  if (emscripten_get_element_css_size(canvasSelector,&cssW,&cssH)==EMSCRIPTEN_RESULT_SUCCESS &&
-      cssW>0.0 && cssH>0.0) {
-    double dpr=emscripten_get_device_pixel_ratio();
-    if (dpr<=0.0) dpr=1.0;
-
-    pixelW=(int)(cssW*dpr+0.5);
-    pixelH=(int)(cssH*dpr+0.5);
-    if (pixelW<1) pixelW=1;
-    if (pixelH<1) pixelH=1;
-
-    emscripten_set_canvas_element_size(canvasSelector,pixelW,pixelH);
-    w=pixelW;
-    h=pixelH;
-    return true;
-  }
-
-  return false;
-}
 #endif
 
 class FurnaceGLTexture: public FurnaceGUITexture {
@@ -580,10 +546,11 @@ void FurnaceGUIRenderGL::present() {
 bool FurnaceGUIRenderGL::getOutputSize(int& w, int& h) {
   SDL_GL_GetDrawableSize(sdlWin,&w,&h);
 #ifdef __EMSCRIPTEN__
-  if (w<=0 || h<=0) {
-    if (furnaceWebResolveCanvasSize(w,h)) {
-      return true;
-    }
+  int browserW=w;
+  int browserH=h;
+  if (furnaceWebResolveCanvasPixelSize(browserW,browserH)) {
+    w=browserW;
+    h=browserH;
   }
 #endif
   return true;
