@@ -1,0 +1,319 @@
+name: Build upstream Furnace WASM bundles
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: Specific upstream tag to build
+        required: false
+        type: string
+      force_rebuild:
+        description: Rebuild even if a wasm-* archive tag already exists
+        required: false
+        default: false
+        type: boolean
+      deploy_live:
+        description: Update Cloudflare Pages after a successful archive
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  deployments: write
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: upstream-wasm
+  cancel-in-progress: false
+
+env:
+  EMSDK_VERSION: '5.0.3'
+  NODE_VERSION: '22'
+  OVERLAY_REF: refs/remotes/origin/wasm-overlay
+  UPSTREAM_BASE_BRANCH: master
+  UPSTREAM_REPO: tildearrow/furnace
+  UPSTREAM_REMOTE_URL: https://github.com/tildearrow/furnace.git
+
+jobs:
+  discover:
+    name: Discover upstream tag to build
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.select.outputs.should_build }}
+      tag: ${{ steps.select.outputs.tag }}
+      stream: ${{ steps.select.outputs.stream }}
+      archive_tag: ${{ steps.select.outputs.archive_tag }}
+      archive_asset: ${{ steps.select.outputs.archive_asset }}
+      metadata_asset: ${{ steps.select.outputs.metadata_asset }}
+      release_title: ${{ steps.select.outputs.release_title }}
+      reason: ${{ steps.select.outputs.reason }}
+      deploy_live: ${{ steps.dispatch_flags.outputs.deploy_live }}
+      force_rebuild: ${{ steps.dispatch_flags.outputs.force_rebuild }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve dispatch flags
+        id: dispatch_flags
+        run: |
+          deploy_live="true"
+          force_rebuild="false"
+
+          if [ '${{ github.event_name }}' = 'workflow_dispatch' ]; then
+            deploy_live='${{ inputs.deploy_live }}'
+            force_rebuild='${{ inputs.force_rebuild }}'
+          fi
+
+          echo "deploy_live=${deploy_live}" >> "${GITHUB_OUTPUT}"
+          echo "force_rebuild=${force_rebuild}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fetch upstream tags and overlay branch
+        run: |
+          git remote add upstream "${UPSTREAM_REMOTE_URL}"
+          git fetch --force origin '+refs/heads/wasm-overlay:refs/remotes/origin/wasm-overlay'
+          git fetch --force upstream \
+            "+refs/heads/${UPSTREAM_BASE_BRANCH}:refs/remotes/upstream/${UPSTREAM_BASE_BRANCH}" \
+            --tags
+
+      - name: Select upstream tag
+        id: select
+        env:
+          FORCE_REBUILD: ${{ steps.dispatch_flags.outputs.force_rebuild }}
+          INPUT_UPSTREAM_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.upstream_tag || '' }}
+          MIN_DEV_TAG: ${{ vars.MIN_DEV_TAG }}
+          MIN_RELEASE_TAG: ${{ vars.MIN_RELEASE_TAG }}
+        run: node ./scripts/select-upstream-tag.mjs >> "${GITHUB_OUTPUT}"
+
+      - name: Selection summary
+        run: |
+          echo "should_build: ${{ steps.select.outputs.should_build }}"
+          echo "tag: ${{ steps.select.outputs.tag }}"
+          echo "stream: ${{ steps.select.outputs.stream }}"
+          echo "reason: ${{ steps.select.outputs.reason }}"
+
+  build_archive:
+    name: Build and archive ${{ needs.discover.outputs.tag }}
+    runs-on: ubuntu-latest
+    needs: discover
+    if: ${{ needs.discover.outputs.should_build == 'true' }}
+    outputs:
+      tag: ${{ needs.discover.outputs.tag }}
+      stream: ${{ needs.discover.outputs.stream }}
+      archive_tag: ${{ needs.discover.outputs.archive_tag }}
+      archive_asset: ${{ needs.discover.outputs.archive_asset }}
+      metadata_asset: ${{ needs.discover.outputs.metadata_asset }}
+      deploy_live: ${{ needs.discover.outputs.deploy_live }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream tags and overlay branch
+        run: |
+          git remote add upstream "${UPSTREAM_REMOTE_URL}"
+          git fetch --force origin '+refs/heads/wasm-overlay:refs/remotes/origin/wasm-overlay'
+          git fetch --force upstream \
+            "+refs/heads/${UPSTREAM_BASE_BRANCH}:refs/remotes/upstream/${UPSTREAM_BASE_BRANCH}" \
+            --tags
+
+      - name: Prepare upstream+overlay source tree
+        env:
+          SELECTED_TAG: ${{ needs.discover.outputs.tag }}
+        run: |
+          test -n "${SELECTED_TAG}"
+
+          overlay_base="$(git merge-base "${OVERLAY_REF}" "refs/remotes/upstream/${UPSTREAM_BASE_BRANCH}")"
+          if [ -z "${overlay_base}" ]; then
+            echo "Could not determine overlay base from ${OVERLAY_REF}" >&2
+            exit 1
+          fi
+
+          echo "Overlay base: ${overlay_base}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "build/${SELECTED_TAG}" "refs/tags/${SELECTED_TAG}"
+          git cherry-pick "${overlay_base}..${OVERLAY_REF}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Emscripten and build browser bundle
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "${RUNNER_TEMP}/emsdk"
+          pushd "${RUNNER_TEMP}/emsdk"
+          ./emsdk install "${EMSDK_VERSION}"
+          ./emsdk activate "${EMSDK_VERSION}"
+          # shellcheck disable=SC1091
+          source ./emsdk_env.sh
+          popd
+
+          emcc -v
+          npm ci
+          npm run gui:build:pages
+
+      - name: Create archive assets
+        env:
+          ARCHIVE_ASSET: ${{ needs.discover.outputs.archive_asset }}
+          METADATA_ASSET: ${{ needs.discover.outputs.metadata_asset }}
+          SELECTED_TAG: ${{ needs.discover.outputs.tag }}
+          STREAM: ${{ needs.discover.outputs.stream }}
+        run: |
+          build_commit="$(git rev-parse HEAD)"
+          upstream_commit="$(git rev-parse "refs/tags/${SELECTED_TAG}^{commit}")"
+          overlay_commit="$(git rev-parse "${OVERLAY_REF}")"
+
+          export BUILD_COMMIT="${build_commit}"
+          export OVERLAY_COMMIT="${overlay_commit}"
+          export UPSTREAM_COMMIT="${upstream_commit}"
+
+          (cd dist-gui && zip -qr "../${ARCHIVE_ASSET}" .)
+
+          node --input-type=module <<'EOF'
+          import { writeFileSync } from 'node:fs'
+
+          const metadata = {
+            generatedAt: new Date().toISOString(),
+            upstreamRepo: process.env.UPSTREAM_REPO,
+            upstreamTag: process.env.SELECTED_TAG,
+            stream: process.env.STREAM,
+            upstreamCommit: process.env.UPSTREAM_COMMIT,
+            buildCommit: process.env.BUILD_COMMIT,
+            overlayRef: process.env.OVERLAY_REF,
+            overlayCommit: process.env.OVERLAY_COMMIT,
+            emsdkVersion: process.env.EMSDK_VERSION,
+            nodeVersion: process.env.NODE_VERSION,
+          }
+
+          writeFileSync(process.env.METADATA_ASSET, `${JSON.stringify(metadata, null, 2)}\n`)
+          EOF
+
+      - name: Push archive tag
+        env:
+          ARCHIVE_TAG: ${{ needs.discover.outputs.archive_tag }}
+        run: |
+          git tag -f "${ARCHIVE_TAG}"
+          git push origin "refs/tags/${ARCHIVE_TAG}" --force
+
+      - name: Create or update GitHub release
+        env:
+          ARCHIVE_ASSET: ${{ needs.discover.outputs.archive_asset }}
+          ARCHIVE_TAG: ${{ needs.discover.outputs.archive_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METADATA_ASSET: ${{ needs.discover.outputs.metadata_asset }}
+          RELEASE_TITLE: ${{ needs.discover.outputs.release_title }}
+          SELECTED_TAG: ${{ needs.discover.outputs.tag }}
+        run: |
+          notes_file="$(mktemp)"
+          cat > "${notes_file}" <<EOF
+          Upstream tag: ${SELECTED_TAG}
+          Archived as: ${ARCHIVE_TAG}
+
+          This release contains the standalone browser bundle plus build metadata for the corresponding upstream Furnace tag.
+          EOF
+
+          if gh release view "${ARCHIVE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${ARCHIVE_TAG}" "${ARCHIVE_ASSET}" "${METADATA_ASSET}" --clobber
+          else
+            gh release create "${ARCHIVE_TAG}" "${ARCHIVE_ASSET}" "${METADATA_ASSET}" \
+              --title "${RELEASE_TITLE}" \
+              --notes-file "${notes_file}"
+          fi
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.discover.outputs.archive_tag }}
+          path: |
+            ${{ needs.discover.outputs.archive_asset }}
+            ${{ needs.discover.outputs.metadata_asset }}
+
+  deploy_live:
+    name: Deploy live Cloudflare Pages ${{ needs.build_archive.outputs.stream }} site
+    runs-on: ubuntu-latest
+    needs: [discover, build_archive]
+    if: ${{ needs.build_archive.result == 'success' && needs.discover.outputs.deploy_live == 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Fetch archive tags
+        run: git fetch --force --tags origin
+
+      - name: Download archived bundles
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p .wasm-release-assets .wasm-release-inputs
+
+          mapfile -t archive_tags < <(git tag -l 'wasm-*' | sort)
+          if [ "${#archive_tags[@]}" -eq 0 ]; then
+            echo "No archived wasm-* tags exist yet; skipping deploy." >&2
+            exit 1
+          fi
+
+          for archive_tag in "${archive_tags[@]}"; do
+            upstream_tag="${archive_tag#wasm-}"
+            asset_name="furnace-gui-${upstream_tag}.zip"
+            asset_dir=".wasm-release-assets/${upstream_tag}"
+
+            mkdir -p "${asset_dir}" ".wasm-release-inputs/${upstream_tag}"
+            gh release download "${archive_tag}" \
+              --pattern "${asset_name}" \
+              --dir "${asset_dir}"
+            unzip -q "${asset_dir}/${asset_name}" -d ".wasm-release-inputs/${upstream_tag}"
+          done
+
+      - name: Resolve Cloudflare Pages project
+        id: cloudflare_project
+        env:
+          DEV_PROJECT: ${{ vars.CLOUDFLARE_DEV_PROJECT_NAME }}
+          RELEASE_PROJECT: ${{ vars.CLOUDFLARE_RELEASE_PROJECT_NAME }}
+          STREAM: ${{ needs.build_archive.outputs.stream }}
+        run: |
+          project_name="${DEV_PROJECT}"
+          if [ "${STREAM}" = 'release' ]; then
+            project_name="${RELEASE_PROJECT}"
+          fi
+
+          if [ -z "${project_name}" ]; then
+            echo "Missing Cloudflare Pages project name for stream ${STREAM}" >&2
+            exit 1
+          fi
+
+          echo "name=${project_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Assemble Cloudflare Pages site
+        env:
+          STREAM: ${{ needs.build_archive.outputs.stream }}
+        run: |
+          node ./scripts/assemble-cloudflare-site.mjs \
+            --input .wasm-release-inputs \
+            --output .cloudflare-site \
+            --stream "${STREAM}"
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy .cloudflare-site --project-name=${{ steps.cloudflare_project.outputs.name }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
