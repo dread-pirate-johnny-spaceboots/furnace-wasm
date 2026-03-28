@@ -148,6 +148,8 @@ enum FurnaceGUIRenderBackend {
 
 #ifdef HAVE_MOMO
 #define ngettext momo_ngettext
+#elif !defined(HAVE_LOCALE) && !defined(ngettext)
+#define ngettext(_strS,_strP,_amount) (((_amount)==1)?(_strS):(_strP))
 #endif
 
 #define GUI_EDIT_OCTAVE_MIN -5
@@ -1763,6 +1765,8 @@ class FurnaceGUI {
   bool midiWakeUp;
   bool makeDrumkitMode;
   bool filePlayerSync;
+  bool loopStarted;
+  bool loopThreadedInput;
   bool audioEngineChanged, settingsChanged, debugFFT, debugRowTimestamps;
   bool willExport[DIV_MAX_CHIPS];
   int vgmExportVersion;
@@ -3297,6 +3301,11 @@ class FurnaceGUI {
     bool decodeNote(const char* what, short& note);
     void bindEngine(DivEngine* eng);
     void enableSafeMode();
+    void browserMouseMove(int x, int y, int xrel, int yrel);
+    void browserMouseDown(int x, int y, int button);
+    void browserMouseUp(int x, int y, int button);
+    void browserMouseWheel(float x, float y);
+    void browserMouseLeave();
     void updateScroll(int amount);
     void updateScrollRaw(float amount);
     void addScroll(int amount);
@@ -3308,6 +3317,8 @@ class FurnaceGUI {
     void runPendingDrawOsc(PendingDrawOsc* which);
     bool detectOutOfBoundsWindow(SDL_Rect& failing);
     int processEvent(SDL_Event* ev);
+    bool beginLoop();
+    bool loopFrame();
     bool loop();
     bool finish(bool saveConfig=false);
     bool init();

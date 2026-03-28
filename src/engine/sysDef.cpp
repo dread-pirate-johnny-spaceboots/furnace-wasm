@@ -45,6 +45,35 @@ unsigned char DivEngine::systemToFileDMF(DivSystem val) {
   return sysDefs[val]->id_DMF;
 }
 
+void DivEngine::ensureSystemRegistry() {
+  bool haveDefs=false;
+
+  for (int i=0; i<DIV_MAX_CHIP_DEFS; i++) {
+    sysFileMapFur[i]=DIV_SYSTEM_NULL;
+    sysFileMapDMF[i]=DIV_SYSTEM_NULL;
+    if (sysDefs[i]!=NULL) {
+      haveDefs=true;
+    }
+  }
+
+  if (!haveDefs) {
+    registerSystems();
+    return;
+  }
+
+  for (int i=0; i<DIV_MAX_CHIP_DEFS; i++) {
+    if (sysDefs[i]==NULL) continue;
+    if (sysDefs[i]->id!=0) {
+      sysFileMapFur[sysDefs[i]->id]=(DivSystem)i;
+    }
+    if (sysDefs[i]->id_DMF!=0) {
+      sysFileMapDMF[sysDefs[i]->id_DMF]=(DivSystem)i;
+    }
+  }
+
+  systemsRegistered=true;
+}
+
 int DivEngine::getChannelCount(DivSystem sys) {
   if (sysDefs[sys]==NULL) return 0;
   return sysDefs[sys]->channels;

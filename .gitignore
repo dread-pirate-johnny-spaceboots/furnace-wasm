@@ -39,6 +39,14 @@ res/docpdf/.venv
 res/docpdf/htmldoc/
 res/fonts/compressed/
 res/furnace.appdata.xml
+build-gui/
+dist/
+dist-gui/
+node_modules/
+web/gui/runtime/*
+!web/gui/runtime/.gitkeep
+web/public/gui/runtime/*
+!web/public/gui/runtime/.gitkeep
 src/asm/6502/*.o
 src/asm/6502/*.bin
 src/asm/6502/nes/test.nes

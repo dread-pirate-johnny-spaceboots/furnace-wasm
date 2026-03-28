@@ -6,6 +6,8 @@
 #include <nfd.h>
 #elif defined(ANDROID)
 #include <SDL.h>
+#elif defined(__EMSCRIPTEN__)
+// Browser builds always use the internal picker.
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
 #include "../../extern/pfd-fixed/portable-file-dialogs.h"
 #endif
@@ -175,6 +177,9 @@ bool FurnaceGUIFileDialog::openLoad(String header, std::vector<String> filter, S
     jniEnv->DeleteLocalRef(class_);
     jniEnv->DeleteLocalRef(activity);
     return true;
+#elif defined(__EMSCRIPTEN__)
+    hasError=true;
+    return false;
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
     dialogO=new pfd::open_file(header,path,filter,allowMultiple?(pfd::opt::multiselect):(pfd::opt::none));
     hasError=!pfd::settings::available();
@@ -265,6 +270,9 @@ bool FurnaceGUIFileDialog::openSave(String header, std::vector<String> filter, S
     jniEnv->DeleteLocalRef(class_);
     jniEnv->DeleteLocalRef(activity);
     return true;
+#elif defined(__EMSCRIPTEN__)
+    hasError=true;
+    return false;
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
     dialogS=new pfd::save_file(header,path,filter);
     hasError=!pfd::settings::available();
@@ -307,6 +315,9 @@ bool FurnaceGUIFileDialog::openSelectDir(String header, String path, double dpiS
 #elif defined(ANDROID)
     hasError=true;
     return false;
+#elif defined(__EMSCRIPTEN__)
+    hasError=true;
+    return false;
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
     dialogF=new pfd::select_folder(header,path);
     hasError=!pfd::settings::available();
@@ -345,7 +356,7 @@ void FurnaceGUIFileDialog::close() {
 #ifdef USE_NFD
         dialogF->join();
 #endif
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(__EMSCRIPTEN__)
         delete dialogF;
 #endif
         dialogF=NULL;
@@ -355,7 +366,7 @@ void FurnaceGUIFileDialog::close() {
 #ifdef USE_NFD
         dialogS->join();
 #endif
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(__EMSCRIPTEN__)
         delete dialogS;
 #endif
         dialogS=NULL;
@@ -365,7 +376,7 @@ void FurnaceGUIFileDialog::close() {
 #ifdef USE_NFD
         dialogO->join();
 #endif
-#ifndef ANDROID
+#if !defined(ANDROID) && !defined(__EMSCRIPTEN__)
         delete dialogO;
 #endif
         dialogO=NULL;
@@ -375,6 +386,10 @@ void FurnaceGUIFileDialog::close() {
     }
 #ifdef USE_NFD
     dialogOK=false;
+#elif defined(__EMSCRIPTEN__)
+    dialogO=NULL;
+    dialogS=NULL;
+    dialogF=NULL;
 #endif
   } else {
     newFilePicker->close();
@@ -401,6 +416,8 @@ bool FurnaceGUIFileDialog::render(const ImVec2& min, const ImVec2& max) {
     return false;
 #elif defined(ANDROID)
     // TODO: detect when file picker is closed
+    return false;
+#elif defined(__EMSCRIPTEN__)
     return false;
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
     if (dialogType==2) {

@@ -1080,7 +1080,7 @@ int main(int argc, char** argv) {
     if (outName!="") {
       e.setConsoleMode(true);
       e.saveAudio(outName.c_str(),exportOptions);
-      e.waitAudioFile();
+      e.finishAudioFile();
     }
     if (romOutName!="") {
       e.setConsoleMode(true);

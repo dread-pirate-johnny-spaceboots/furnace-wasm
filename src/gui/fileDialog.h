@@ -19,6 +19,8 @@
 
 #elif defined(ANDROID)
 #include <jni.h>
+#elif defined(__EMSCRIPTEN__)
+// Browser builds always use the internal picker.
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
 namespace pfd {
   class open_file;
@@ -51,6 +53,10 @@ class FurnaceGUIFileDialog {
   void* dialogO;
   void* dialogS;
   void* dialogF;
+#elif defined(__EMSCRIPTEN__)
+  void* dialogO;
+  void* dialogS;
+  void* dialogF;
 #elif (!defined(SUPPORT_XP) || !defined(_WIN32))
   pfd::open_file* dialogO;
   pfd::save_file* dialogS;
@@ -75,7 +81,11 @@ class FurnaceGUIFileDialog {
     String getPath();
     std::vector<String>& getFileName();
     explicit FurnaceGUIFileDialog(bool system, FurnaceFilePicker* builtInPicker):
+#ifdef __EMSCRIPTEN__
+      sysDialog(false),
+#else
       sysDialog(system),
+#endif
       opened(false),
       dialogType(0),
       hasError(false),
@@ -85,5 +95,6 @@ class FurnaceGUIFileDialog {
 #endif
       dialogO(NULL),
       dialogS(NULL),
+      dialogF(NULL),
       mobileUI(false) {}
 };

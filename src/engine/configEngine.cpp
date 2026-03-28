@@ -48,7 +48,24 @@
 #endif
 
 void DivEngine::initConfDir() {
-#ifdef _WIN32
+#ifdef __EMSCRIPTEN__
+  configPath="/persist/home/.config/furnace";
+  struct stat st;
+  std::string pathSep="/";
+  size_t sepPos=configPath.find(pathSep,1);
+  while (sepPos!=std::string::npos) {
+    std::string subpath=configPath.substr(0,sepPos++);
+    if (stat(subpath.c_str(),&st)!=0) {
+      if (mkdir(subpath.c_str(),0755)!=0 && errno!=EEXIST) {
+        logW("could not create config path element %s! (%s)",subpath.c_str(),strerror(errno));
+        configPath=".";
+        return;
+      }
+    }
+    sepPos=configPath.find(pathSep,sepPos);
+  }
+  return;
+#elif defined(_WIN32)
   // maybe move this function in here instead?
   configPath=getWinConfigPath();
 #elif defined(IS_MOBILE)

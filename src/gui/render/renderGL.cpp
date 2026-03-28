@@ -26,6 +26,10 @@
 #include "SDL_opengl.h"
 #define PIXEL_FORMAT GL_UNSIGNED_INT_8_8_8_8_REV
 #endif
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+#endif
 #include "backends/imgui_impl_opengl3.h"
 
 #define C(x) x; if (glGetError()!=GL_NO_ERROR) logW("OpenGL error in %s:%d: " #x,__FILE__,__LINE__);
@@ -61,6 +65,41 @@ PFNGLGETSHADERINFOLOGPROC furGetShaderInfoLog=NULL;
 PFNGLGETGRAPHICSRESETSTATUSARBPROC furGetGraphicsResetStatusARB=NULL;
 #endif
 
+#ifdef __EMSCRIPTEN__
+static bool furnaceWebResolveCanvasSize(int& w, int& h) {
+  static const char* canvasSelector="#furnace-canvas";
+
+  int pixelW=0;
+  int pixelH=0;
+  if (emscripten_get_canvas_element_size(canvasSelector,&pixelW,&pixelH)==EMSCRIPTEN_RESULT_SUCCESS &&
+      pixelW>0 && pixelH>0) {
+    w=pixelW;
+    h=pixelH;
+    return true;
+  }
+
+  double cssW=0.0;
+  double cssH=0.0;
+  if (emscripten_get_element_css_size(canvasSelector,&cssW,&cssH)==EMSCRIPTEN_RESULT_SUCCESS &&
+      cssW>0.0 && cssH>0.0) {
+    double dpr=emscripten_get_device_pixel_ratio();
+    if (dpr<=0.0) dpr=1.0;
+
+    pixelW=(int)(cssW*dpr+0.5);
+    pixelH=(int)(cssH*dpr+0.5);
+    if (pixelW<1) pixelW=1;
+    if (pixelH<1) pixelH=1;
+
+    emscripten_set_canvas_element_size(canvasSelector,pixelW,pixelH);
+    w=pixelW;
+    h=pixelH;
+    return true;
+  }
+
+  return false;
+}
+#endif
+
 class FurnaceGLTexture: public FurnaceGUITexture {
   public:
   GLuint id;
@@ -83,6 +122,7 @@ const char* sh_wipe_srcV_ES2=
   "}\n";
 
 const char* sh_wipe_srcF_ES2=
+  "precision mediump float;\n"
   "uniform float uAlpha;\n"
   "void main() {\n"
   "  gl_FragColor=vec4(0.0,0.0,0.0,uAlpha);\n"
@@ -539,6 +579,13 @@ void FurnaceGUIRenderGL::present() {
 
 bool FurnaceGUIRenderGL::getOutputSize(int& w, int& h) {
   SDL_GL_GetDrawableSize(sdlWin,&w,&h);
+#ifdef __EMSCRIPTEN__
+  if (w<=0 || h<=0) {
+    if (furnaceWebResolveCanvasSize(w,h)) {
+      return true;
+    }
+  }
+#endif
   return true;
 }
 
@@ -711,21 +758,16 @@ bool FurnaceGUIRenderGL::init(SDL_Window* win, int swapInterval) {
   maxHeight=maxSize;
 
   // texture for osc renderer
+#ifndef USE_GLES
   if (glVer==3) {
     C(glGenTextures(1,&oscDataTex));
-#ifdef USE_GLES
-    C(glBindTexture(GL_TEXTURE_2D,oscDataTex));
-    C(glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST));
-    C(glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST));
-    C(glTexImage2D(GL_TEXTURE_2D,0,GL_RED_EXT,2048,1,0,GL_RED_EXT,GL_FLOAT,NULL));
-#else
     C(glBindTexture(GL_TEXTURE_1D,oscDataTex));
     C(glTexParameteri(GL_TEXTURE_1D,GL_TEXTURE_MIN_FILTER,GL_NEAREST));
     C(glTexParameteri(GL_TEXTURE_1D,GL_TEXTURE_MAG_FILTER,GL_NEAREST));
     C(glTexImage1D(GL_TEXTURE_1D,0,GL_RED,2048,0,GL_RED,GL_FLOAT,NULL));
-#endif
     C(furActiveTexture(GL_TEXTURE0));
   }
+#endif
 
   // create shaders
 #ifdef USE_GLES
@@ -733,12 +775,8 @@ bool FurnaceGUIRenderGL::init(SDL_Window* win, int swapInterval) {
     sh_wipe_uAlpha=furGetUniformLocation(sh_wipe_program,"uAlpha");
   }
 
-  if ((sh_oscRender_have=createShader(sh_oscRender_srcV,sh_oscRender_srcF,sh_oscRender_vertex,sh_oscRender_fragment,sh_oscRender_program,sh_oscRender_attrib))==true) {
-    sh_oscRender_uColor=furGetUniformLocation(sh_oscRender_program,"uColor");
-    sh_oscRender_uLineWidth=furGetUniformLocation(sh_oscRender_program,"uLineWidth");
-    sh_oscRender_uResolution=furGetUniformLocation(sh_oscRender_program,"uResolution");
-    sh_oscRender_oscVal=furGetUniformLocation(sh_oscRender_program,"oscVal");
-  }
+  // WebGL1 lacks the features the current osc shader path relies on.
+  sh_oscRender_have=false;
 #else
   if (glVer==3) {
     if ((sh_wipe_have=createShader(sh_wipe_srcV_130,sh_wipe_srcF_130,sh_wipe_vertex,sh_wipe_fragment,sh_wipe_program,sh_wipe_attrib))==true) {

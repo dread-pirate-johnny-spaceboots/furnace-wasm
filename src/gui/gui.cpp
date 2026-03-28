@@ -36,10 +36,15 @@
 #include "intConst.h"
 #include "scaling.h"
 #include "introTune.h"
+#include "webSupport.h"
 #include <stdint.h>
 #include <zlib.h>
 #include <fmt/printf.h>
 #include <stdexcept>
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -65,6 +70,121 @@
 #endif
 
 #include "actionUtil.h"
+#include <cstdlib>
+
+extern const char* defaultLayout;
+
+#ifdef __EMSCRIPTEN__
+static bool furnaceWebResolveGuiWindowSize(int& outW, int& outH) {
+  static const char* canvasSelector="#furnace-canvas";
+  double cssW=0.0;
+  double cssH=0.0;
+
+  if (emscripten_get_element_css_size(canvasSelector,&cssW,&cssH)!=EMSCRIPTEN_RESULT_SUCCESS) {
+    return false;
+  }
+  if (cssW<=0.0 || cssH<=0.0) {
+    int pixelW=0;
+    int pixelH=0;
+    if (emscripten_get_canvas_element_size(canvasSelector,&pixelW,&pixelH)!=EMSCRIPTEN_RESULT_SUCCESS ||
+        pixelW<=0 || pixelH<=0) {
+      return false;
+    }
+
+    double dpr=emscripten_get_device_pixel_ratio();
+    if (dpr<=0.0) dpr=1.0;
+    cssW=pixelW/dpr;
+    cssH=pixelH/dpr;
+  }
+
+  outW=(int)(cssW+0.5);
+  outH=(int)(cssH+0.5);
+  if (outW<1) outW=1;
+  if (outH<1) outH=1;
+  return true;
+}
+
+static bool furnaceWebParseLayoutCoordPair(const String& layout, size_t start, int& outX, int& outY, size_t& outEnd) {
+  if (start >= layout.size()) return false;
+
+  char* endPtr = nullptr;
+  long x = strtol(layout.c_str() + start, &endPtr, 10);
+  if (endPtr == layout.c_str() + start || endPtr == nullptr || *endPtr != ',') {
+    return false;
+  }
+
+  long y = strtol(endPtr + 1, &endPtr, 10);
+  if (endPtr == nullptr) {
+    return false;
+  }
+
+  outX = (int)x;
+  outY = (int)y;
+  outEnd = (size_t)(endPtr - layout.c_str());
+  return true;
+}
+
+static String furnaceWebNormalizeLayout(const String& layout) {
+  static const char* dockspaceWindow = "[Window][DockSpaceViewport_11111111]";
+  static const char* posPrefix = "Pos=";
+
+  size_t dockspaceStart = layout.find(dockspaceWindow);
+  if (dockspaceStart == String::npos) {
+    return layout;
+  }
+
+  size_t dockspaceEnd = layout.find("\n[", dockspaceStart + 1);
+  size_t dockspacePos = layout.find(posPrefix, dockspaceStart);
+  if (dockspacePos == String::npos || (dockspaceEnd != String::npos && dockspacePos > dockspaceEnd)) {
+    return layout;
+  }
+
+  int offsetX = 0;
+  int offsetY = 0;
+  size_t dockspacePosEnd = 0;
+  if (!furnaceWebParseLayoutCoordPair(layout, dockspacePos + strlen(posPrefix), offsetX, offsetY, dockspacePosEnd)) {
+    return layout;
+  }
+
+  if (offsetX == 0 && offsetY == 0) {
+    return layout;
+  }
+
+  String normalized = layout;
+  size_t searchPos = 0;
+  while ((searchPos = normalized.find(posPrefix, searchPos)) != String::npos) {
+    int x = 0;
+    int y = 0;
+    size_t valueEnd = 0;
+    size_t valueStart = searchPos + strlen(posPrefix);
+    if (!furnaceWebParseLayoutCoordPair(normalized, valueStart, x, y, valueEnd)) {
+      searchPos = valueStart;
+      continue;
+    }
+
+    x -= offsetX;
+    y -= offsetY;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+
+    String replacement = fmt::sprintf("%s%d,%d", posPrefix, x, y);
+    normalized.replace(searchPos, valueEnd - searchPos, replacement);
+    searchPos += replacement.size();
+  }
+
+  return normalized;
+}
+
+static const char* furnaceWebDefaultLayout() {
+  static String normalized = furnaceWebNormalizeLayout(defaultLayout);
+  return normalized.c_str();
+}
+#endif
+
+static int furnaceScalePointerCoord(int value, int canvasSize, int windowSize) {
+  if (windowSize<=0 || canvasSize<=0) return value;
+  return (int)((double)value*((double)canvasSize/(double)windowSize));
+}
 
 #ifdef HAVE_SNDFILE
 #include <sndfile.h>
@@ -1292,6 +1412,31 @@ void FurnaceGUI::prepareLayout() {
   check=ps_fopen(finalLayoutPath,"r");
   if (check!=NULL) {
     fclose(check);
+#ifdef __EMSCRIPTEN__
+    check=ps_fopen(finalLayoutPath,"rb");
+    if (check!=NULL) {
+      if (fseek(check,0,SEEK_END)==0) {
+        long len=ftell(check);
+        if (len>0 && fseek(check,0,SEEK_SET)==0) {
+          String currentLayout;
+          currentLayout.resize((size_t)len);
+          if (fread(&currentLayout[0],1,(size_t)len,check)==(size_t)len) {
+            String normalized=furnaceWebNormalizeLayout(currentLayout);
+            fclose(check);
+            if (normalized!=currentLayout) {
+              FILE* rewritten=ps_fopen(finalLayoutPath,"wb");
+              if (rewritten!=NULL) {
+                fwrite(normalized.c_str(),1,normalized.size(),rewritten);
+                fclose(rewritten);
+              }
+            }
+            return;
+          }
+        }
+      }
+      fclose(check);
+    }
+#endif
     return;
   }
 
@@ -1303,7 +1448,11 @@ void FurnaceGUI::prepareLayout() {
     return;
   }
 
-  fwrite(defaultLayout,1,strlen(defaultLayout),check);
+  const char* initialLayout=defaultLayout;
+#ifdef __EMSCRIPTEN__
+  initialLayout=furnaceWebDefaultLayout();
+#endif
+  fwrite(initialLayout,1,strlen(initialLayout),check);
   fclose(check);
 }
 
@@ -3005,7 +3154,11 @@ void FurnaceGUI::showWarning(String what, FurnaceGUIWarnings type) {
       warnChoices={
         {tYes,kYes,[this]{
           if (!mobileUI) {
-            ImGui::LoadIniSettingsFromMemory(defaultLayout);
+            const char* initialLayout=defaultLayout;
+#ifdef __EMSCRIPTEN__
+            initialLayout=furnaceWebDefaultLayout();
+#endif
+            ImGui::LoadIniSettingsFromMemory(initialLayout);
             if (!ImGui::SaveIniSettingsToDisk(finalLayoutPath,true)) {
               reportError(fmt::sprintf(_("could NOT save layout! %s"),strerror(errno)));
             }
@@ -3771,7 +3924,11 @@ void FurnaceGUI::toggleMobileUI(bool enable, bool force) {
       ImGui::GetIO().IniFilename=NULL;
       if (!ImGui::LoadIniSettingsFromDisk(finalLayoutPath,true)) {
         reportError(fmt::sprintf(_("could NOT load layout! %s"),strerror(errno)));
-        ImGui::LoadIniSettingsFromMemory(defaultLayout);
+        const char* initialLayout=defaultLayout;
+#ifdef __EMSCRIPTEN__
+        initialLayout=furnaceWebDefaultLayout();
+#endif
+        ImGui::LoadIniSettingsFromMemory(initialLayout);
       }
       ImGui::GetIO().ConfigFlags&=~ImGuiConfigFlags_InertialScrollEnable;
       ImGui::GetIO().ConfigFlags&=~ImGuiConfigFlags_NoHoverColors;
@@ -3925,6 +4082,20 @@ int FurnaceGUI::processEvent(SDL_Event* ev) {
   }
   return 1;
 }
+
+#ifdef FURNACE_WEB_BROWSER
+static bool furnaceWebIsSdlMouseEvent(const SDL_Event& ev) {
+  switch (ev.type) {
+    case SDL_MOUSEMOTION:
+    case SDL_MOUSEBUTTONDOWN:
+    case SDL_MOUSEBUTTONUP:
+    case SDL_MOUSEWHEEL:
+      return true;
+    default:
+      return false;
+  }
+}
+#endif
 
 #define FIND_POINT(p,pid) \
   for (TouchPoint& i: activePoints) { \
@@ -4140,6 +4311,71 @@ void FurnaceGUI::pointMotion(int x, int y, int xrel, int yrel) {
   }
 }
 
+void FurnaceGUI::browserMouseMove(int x, int y, int xrel, int yrel) {
+#ifdef FURNACE_WEB_BROWSER
+  ImGuiIO& io=ImGui::GetIO();
+  io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+  io.AddMousePosEvent(x,y);
+  pointMotion(x,y,xrel,yrel);
+#else
+  (void)x;
+  (void)y;
+  (void)xrel;
+  (void)yrel;
+#endif
+}
+
+void FurnaceGUI::browserMouseDown(int x, int y, int button) {
+#ifdef FURNACE_WEB_BROWSER
+  ImGuiIO& io=ImGui::GetIO();
+  io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+  io.AddMousePosEvent(x,y);
+  io.AddMouseButtonEvent(button,true);
+  pointDown(x,y,button);
+  insEditMayBeDirty=true;
+#else
+  (void)x;
+  (void)y;
+  (void)button;
+#endif
+}
+
+void FurnaceGUI::browserMouseUp(int x, int y, int button) {
+#ifdef FURNACE_WEB_BROWSER
+  ImGuiIO& io=ImGui::GetIO();
+  io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+  io.AddMousePosEvent(x,y);
+  io.AddMouseButtonEvent(button,false);
+  pointUp(x,y,button);
+  insEditMayBeDirty=true;
+#else
+  (void)x;
+  (void)y;
+  (void)button;
+#endif
+}
+
+void FurnaceGUI::browserMouseWheel(float x, float y) {
+#ifdef FURNACE_WEB_BROWSER
+  ImGuiIO& io=ImGui::GetIO();
+  io.AddMouseSourceEvent(ImGuiMouseSource_Mouse);
+  io.AddMouseWheelEvent(x,y);
+  wheelX+=(int)x;
+  wheelY+=(int)y;
+  insEditMayBeDirty=true;
+#else
+  (void)x;
+  (void)y;
+#endif
+}
+
+void FurnaceGUI::browserMouseLeave() {
+#ifdef FURNACE_WEB_BROWSER
+  ImGuiIO& io=ImGui::GetIO();
+  io.AddMousePosEvent(-FLT_MAX,-FLT_MAX);
+#endif
+}
+
 // how many pixels should be visible at least at x/y dir
 #define OOB_PIXELS_SAFETY 25
 
@@ -4190,7 +4426,41 @@ bool FurnaceGUI::detectOutOfBoundsWindow(SDL_Rect& failing) {
   if (x) pendingLayoutImportReopen.push(&x); \
   x=false;
 
-bool FurnaceGUI::loop() {
+bool FurnaceGUI::beginLoop() {
+  if (loopStarted) {
+    return true;
+  }
+#ifdef IS_MOBILE
+  loopThreadedInput=true;
+#else
+  loopThreadedInput=!settings.noThreadedInput;
+#endif
+  if (loopThreadedInput) {
+    logD("key input: event filter");
+    SDL_SetEventFilter(_processEvent,this);
+  } else {
+    logD("key input: main thread");
+  }
+
+  if (safeMode) {
+    showError(_("Furnace has been started in Safe Mode.\nthis means that:\n\n- software rendering is being used\n- audio output may not work\n- font loading is disabled\n\ncheck any settings which may have made Furnace start up in this mode.\nfont loading is one of these."));
+    settingsOpen=true;
+  }
+
+  loopStarted=true;
+  return true;
+}
+
+bool FurnaceGUI::loopFrame() {
+  if (!loopStarted) {
+    if (!beginLoop()) {
+      return false;
+    }
+  }
+  if (quit) {
+    return false;
+  }
+
   DECLARE_METRIC(calcChanOsc)
   DECLARE_METRIC(mobileControls)
   DECLARE_METRIC(mobileOrderSel)
@@ -4240,33 +4510,15 @@ bool FurnaceGUI::loop() {
   DECLARE_METRIC(multiInsSetup)
   DECLARE_METRIC(popup)
 
-#ifdef IS_MOBILE
-  bool doThreadedInput=true;
-#else
-  bool doThreadedInput=!settings.noThreadedInput;
-#endif
-  if (doThreadedInput) {
-    logD("key input: event filter");
-    SDL_SetEventFilter(_processEvent,this);
-  } else {
-    logD("key input: main thread");
+  SDL_Event ev;
+  SelectionPoint prevCursor=cursor;
+  if (e->isPlaying()) {
+    WAKE_UP;
   }
-
-  if (safeMode) {
-    showError(_("Furnace has been started in Safe Mode.\nthis means that:\n\n- software rendering is being used\n- audio output may not work\n- font loading is disabled\n\ncheck any settings which may have made Furnace start up in this mode.\nfont loading is one of these."));
-    settingsOpen=true;
+  if (--drawHalt<=0) {
+    drawHalt=0;
+    if (settings.powerSave) SDL_WaitEventTimeout(NULL,500);
   }
-
-  while (!quit) {
-    SDL_Event ev;
-    SelectionPoint prevCursor=cursor;
-    if (e->isPlaying()) {
-      WAKE_UP;
-    }
-    if (--drawHalt<=0) {
-      drawHalt=0;
-      if (settings.powerSave) SDL_WaitEventTimeout(NULL,500);
-    }
 
     memcpy(perfMetricsLast,perfMetrics,64*sizeof(FurnaceGUIPerfMetric));
     perfMetricsLastLen=perfMetricsLen;
@@ -4279,13 +4531,21 @@ bool FurnaceGUI::loop() {
       injectBackUp=false;
     }
 
-    while (SDL_PollEvent(&ev)) {
+  while (SDL_PollEvent(&ev)) {
       WAKE_UP;
-      ImGui_ImplSDL2_ProcessEvent(&ev);
-      processPoint(ev);
-      if (!doThreadedInput) processEvent(&ev);
+#ifdef FURNACE_WEB_BROWSER
+      bool handleSdlMouseEvent=!furnaceWebIsSdlMouseEvent(ev);
+#else
+      bool handleSdlMouseEvent=true;
+#endif
+      if (handleSdlMouseEvent) {
+        ImGui_ImplSDL2_ProcessEvent(&ev);
+        processPoint(ev);
+      }
+      if (!loopThreadedInput) processEvent(&ev);
       switch (ev.type) {
         case SDL_MOUSEMOTION: {
+          if (!handleSdlMouseEvent) break;
           int motionX=(double)ev.motion.x*((double)canvasW/(double)scrW);
           int motionY=(double)ev.motion.y*((double)canvasH/(double)scrH);
           int motionXrel=(double)ev.motion.xrel*((double)canvasW/(double)scrW);
@@ -4294,14 +4554,25 @@ bool FurnaceGUI::loop() {
           break;
         }
         case SDL_MOUSEBUTTONUP:
-          pointUp(ev.button.x,ev.button.y,ev.button.button);
+          if (!handleSdlMouseEvent) break;
+          pointUp(
+            furnaceScalePointerCoord(ev.button.x,canvasW,scrW),
+            furnaceScalePointerCoord(ev.button.y,canvasH,scrH),
+            ev.button.button
+          );
           insEditMayBeDirty=true;
           break;
         case SDL_MOUSEBUTTONDOWN:
-          pointDown(ev.button.x,ev.button.y,ev.button.button);
+          if (!handleSdlMouseEvent) break;
+          pointDown(
+            furnaceScalePointerCoord(ev.button.x,canvasW,scrW),
+            furnaceScalePointerCoord(ev.button.y,canvasH,scrH),
+            ev.button.button
+          );
           insEditMayBeDirty=true;
           break;
         case SDL_MOUSEWHEEL:
+          if (!handleSdlMouseEvent) break;
           wheelX+=ev.wheel.x;
           wheelY+=ev.wheel.y;
           insEditMayBeDirty=true;
@@ -4427,6 +4698,7 @@ bool FurnaceGUI::loop() {
             introSkipDo=false;
           }
           break;
+        #ifndef __EMSCRIPTEN__
         case SDL_DROPFILE:
           if (ev.drop.file!=NULL) {
             if (introPos<11.0) {
@@ -4492,12 +4764,13 @@ bool FurnaceGUI::loop() {
             SDL_free(ev.drop.file);
           }
           break;
+        #endif
         case SDL_USEREVENT:
           // used for MIDI wake up
           break;
         case SDL_QUIT:
           if (requestQuit()) {
-            return true;
+            return false;
           }
           break;
       }
@@ -4527,6 +4800,19 @@ bool FurnaceGUI::loop() {
       int prevScrW=scrW;
       int prevScrH=scrH;
       SDL_GetWindowSize(sdlWin,&scrW,&scrH);
+#ifdef __EMSCRIPTEN__
+      if (scrW<=0 || scrH<=0) {
+        int fallbackW=prevScrW;
+        int fallbackH=prevScrH;
+        if (furnaceWebResolveGuiWindowSize(fallbackW,fallbackH)) {
+          scrW=fallbackW;
+          scrH=fallbackH;
+        } else {
+          scrW=prevScrW;
+          scrH=prevScrH;
+        }
+      }
+#endif
       if (prevScrW!=scrW || prevScrH!=scrH) {
         logV("size change 2: %dx%d (from %dx%d)",scrW,scrH,prevScrW,prevScrH);
       }
@@ -4731,7 +5017,7 @@ bool FurnaceGUI::loop() {
     if (SDL_GetWindowFlags(sdlWin)&SDL_WINDOW_MINIMIZED) {
       SDL_Delay(30);
       drawHalt=0;
-      continue;
+      return !quit;
     }
 
 #ifndef NO_INTRO
@@ -4819,7 +5105,7 @@ bool FurnaceGUI::loop() {
       if (initAttempts>5) {
         reportError(_("can't keep going without graphics! Furnace will quit now."));
         quit=true;
-        break;
+        return false;
       }
 
       rend->clear(ImVec4(0.0,0.0,0.0,1.0));
@@ -4837,7 +5123,7 @@ bool FurnaceGUI::loop() {
       mustClear=2;
       initialScreenWipe=1.0f;
 
-      continue;
+      return !quit;
     }
 
     bool fontsFailed=false;
@@ -7760,7 +8046,14 @@ bool FurnaceGUI::loop() {
     if (SDL_GetWindowFlags(sdlWin)&SDL_WINDOW_MINIMIZED) {
       SDL_Delay(100);
     }
+  return !quit;
+}
+
+bool FurnaceGUI::loop() {
+  if (!beginLoop()) {
+    return false;
   }
+  while (loopFrame()) {}
   return false;
 }
 
@@ -7876,6 +8169,17 @@ bool FurnaceGUI::init() {
   scrX=scrConfX=e->getConfInt("lastWindowX",SDL_WINDOWPOS_CENTERED);
   scrY=scrConfY=e->getConfInt("lastWindowY",SDL_WINDOWPOS_CENTERED);
   scrMax=e->getConfBool("lastWindowMax",false);
+#endif
+#ifdef __EMSCRIPTEN__
+  int browserW=scrW;
+  int browserH=scrH;
+  if (furnaceWebResolveGuiWindowSize(browserW,browserH)) {
+    scrW=scrConfW=browserW;
+    scrH=scrConfH=browserH;
+  }
+  scrX=scrConfX=0;
+  scrY=scrConfY=0;
+  scrMax=false;
 #endif
   portrait=(scrW<scrH);
   logV("portrait: %d (%dx%d)",portrait,scrW,scrH);
@@ -8733,6 +9037,7 @@ void FurnaceGUI::commitState(DivConfig& conf) {
 }
 
 bool FurnaceGUI::finish(bool saveConfig) {
+  loopStarted=false;
   if (!quitNoSave) {
     commitState(e->getConfObject());
     if (userPresetsOpen) {
@@ -8888,6 +9193,8 @@ FurnaceGUI::FurnaceGUI():
   midiWakeUp(true),
   makeDrumkitMode(false),
   filePlayerSync(true),
+  loopStarted(false),
+  loopThreadedInput(false),
   audioEngineChanged(false),
   settingsChanged(false),
   debugFFT(false),

@@ -30,7 +30,7 @@ void _runExportThread(DivEngine* caller) {
 }
 
 bool DivEngine::isExporting() {
-  return exporting;
+  return exporting.load(std::memory_order_acquire);
 }
 
 void DivEngine::getLoopsLeft(int &loops) {
@@ -213,7 +213,7 @@ void DivEngine::runExportThread() {
       sf=sfWrap.doOpen(exportPath.c_str(),SFM_WRITE,&si);
       if (sf==NULL) {
         logE("could not open file for writing! (%s)",sf_strerror(NULL));
-        exporting=false;
+        exporting.store(false,std::memory_order_release);
         return;
       }
 
@@ -281,17 +281,8 @@ void DivEngine::runExportThread() {
         logE("could not close audio file!");
       }
 
-      if (initAudioBackend()) {
-        for (int i=0; i<song.systemLen; i++) {
-          disCont[i].setRates(got.rate);
-          disCont[i].setQuality(lowQuality,dcHiPass);
-        }
-        if (!output->setRun(true)) {
-          logE("error while activating audio!");
-        }
-      }
       logI("done!");
-      exporting=false;
+      exporting.store(false,std::memory_order_release);
       break;
     }
     case DIV_EXPORT_MODE_MANY_SYS: {
@@ -314,8 +305,9 @@ void DivEngine::runExportThread() {
         if (sf[i]==NULL) {
           logE("could not open file for writing! (%s)",sf_strerror(NULL));
           for (int j=0; j<i; j++) {
-            sfWrap[i].doClose();
+            sfWrap[j].doClose();
           }
+          exporting.store(false,std::memory_order_release);
           return;
         }
       }
@@ -397,17 +389,8 @@ void DivEngine::runExportThread() {
         }
       }
 
-      if (initAudioBackend()) {
-        for (int i=0; i<song.systemLen; i++) {
-          disCont[i].setRates(got.rate);
-          disCont[i].setQuality(lowQuality,dcHiPass);
-        }
-        if (!output->setRun(true)) {
-          logE("error while activating audio!");
-        }
-      }
       logI("done!");
-      exporting=false;
+      exporting.store(false,std::memory_order_release);
       break;
     }
     case DIV_EXPORT_MODE_MANY_CHAN: {
@@ -556,7 +539,7 @@ void DivEngine::runExportThread() {
           i--;
         }
 
-        if (stopExport) break;
+        if (stopExport.load(std::memory_order_acquire)) break;
       }
 
       delete[] outBufFinal;
@@ -571,23 +554,14 @@ void DivEngine::runExportThread() {
         }
       }
 
-      if (initAudioBackend()) {
-        for (int i=0; i<song.systemLen; i++) {
-          disCont[i].setRates(got.rate);
-          disCont[i].setQuality(lowQuality,dcHiPass);
-        }
-        if (!output->setRun(true)) {
-          logE("error while activating audio!");
-        }
-      }
       logI("done!");
-      exporting=false;
+      exporting.store(false,std::memory_order_release);
       curExportChan=0;
       break;
     }
   }
 
-  stopExport=false;
+  stopExport.store(false,std::memory_order_release);
 }
 #else
 void DivEngine::runExportThread() {
@@ -623,8 +597,9 @@ bool DivEngine::saveAudio(const char* path, DivAudioExportOptions options) {
       exportPath=exportPath.substr(0,extPos);
     }
   }
-  exporting=true;
-  stopExport=false;
+  waitAudioFile();
+  exporting.store(true,std::memory_order_release);
+  stopExport.store(false,std::memory_order_release);
   stop();
   repeatPattern=false;
   setOrder(0);
@@ -661,19 +636,23 @@ bool DivEngine::saveAudio(const char* path, DivAudioExportOptions options) {
 
 void DivEngine::waitAudioFile() {
   if (exportThread!=NULL) {
-    exportThread->join();
+    if (exportThread->joinable()) {
+      exportThread->join();
+    }
+    delete exportThread;
+    exportThread=NULL;
   }
 }
 
 bool DivEngine::haltAudioFile() {
-  stopExport=true;
+  stopExport.store(true,std::memory_order_release);
   stop();
-  waitAudioFile();
   finishAudioFile();
   return true;
 }
 
 void DivEngine::finishAudioFile() {
+  waitAudioFile();
   if (shallSwitchCores()) {
     bool isMutedBefore[DIV_MAX_CHANS];
     memcpy(isMutedBefore,isMuted,DIV_MAX_CHANS*sizeof(bool));
@@ -684,6 +663,15 @@ void DivEngine::finishAudioFile() {
       if (isMutedBefore[i]) {
         muteChannel(i,true);
       }
+    }
+  }
+  if (output==NULL && initAudioBackend()) {
+    for (int i=0; i<song.systemLen; i++) {
+      disCont[i].setRates(got.rate);
+      disCont[i].setQuality(lowQuality,dcHiPass);
+    }
+    if (!output->setRun(true)) {
+      logE("error while activating audio!");
     }
   }
 }

@@ -23,6 +23,7 @@
 #include "newFilePicker.h"
 #include "IconsFontAwesome4.h"
 #include "misc/cpp/imgui_stdlib.h"
+#include "webSupport.h"
 #include "../ta-log.h"
 #include <algorithm>
 #include <chrono>
@@ -1230,6 +1231,15 @@ bool FurnaceFilePicker::draw(ImGuiWindowFlags winFlags) {
   bool readDrives=false;
   bool wantSearch=false;
 
+#ifdef __EMSCRIPTEN__
+  int importState=furnaceWebConsumeImportState();
+  if (importState==1) {
+    newDir=path.empty()?homeDir:path;
+  } else if (importState<0) {
+    failMessage=furnaceWebConsumeImportMessage();
+  }
+#endif
+
   bool began=false;
 
   // center the window if it is unmovable and not an embed
@@ -1383,6 +1393,66 @@ bool FurnaceFilePicker::draw(ImGuiWindowFlags winFlags) {
     }
     ImGui::SetItemTooltip(_("Drives"));
 #endif
+
+#ifdef __EMSCRIPTEN__
+    if (!confirmOverwrite) {
+      ImGui::SameLine();
+      if (ImGui::Button(ICON_FA_UPLOAD "##ImportFromDevice")) {
+        String importDir=path.empty()?homeDir:path;
+        furnaceWebRequestImport(importDir.c_str(),filterOptions[curFilterType+1].c_str(),multiSelect);
+        furnaceWebFocusCanvas();
+      }
+      ImGui::SetItemTooltip(_("Import files from this device into the browser workspace"));
+      if (importState==2) {
+        ImGui::SameLine();
+        ImGui::TextUnformatted(_("Importing..."));
+      }
+    }
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(chosenEntries.empty());
+    if (ImGui::Button(ICON_FA_DOWNLOAD "##DownloadSelection")) {
+      auto selectedPath=[this](FileEntry* entry) -> String {
+        String basePath=path.empty()?homeDir:path;
+        if (basePath.empty()) return entry->name;
+        if (*basePath.rbegin()==DIR_SEPARATOR) return basePath+entry->name;
+        return basePath+DIR_SEPARATOR_STR+entry->name;
+      };
+
+      if (chosenEntries.size()==1) {
+        FileEntry* entry=chosenEntries.front();
+        String targetPath=selectedPath(entry);
+        if (entry->isDir) {
+          furnaceWebDownloadDirectory(targetPath.c_str(),NULL);
+        } else {
+          furnaceWebDownloadFile(targetPath.c_str());
+        }
+      } else {
+        String archiveName="workspace-selection.zip";
+        String basePath=normalizePath(path.empty()?homeDir:path);
+        if (!basePath.empty()) {
+          size_t lastSep=basePath.find_last_of(DIR_SEPARATOR);
+          String baseName=(lastSep==String::npos)?basePath:basePath.substr(lastSep+1);
+          if (!baseName.empty()) {
+            archiveName=baseName+".zip";
+          }
+        }
+
+        String joinedPaths;
+        bool firstPath=true;
+        for (FileEntry* entry: chosenEntries) {
+          if (!firstPath) joinedPaths+='\n';
+          joinedPaths+=selectedPath(entry);
+          firstPath=false;
+        }
+        furnaceWebDownloadSelection(joinedPaths.c_str(),archiveName.c_str());
+      }
+      furnaceWebFocusCanvas();
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip(_("Download the selected browser workspace entries to this device"));
+#endif
+
     ImGui::SameLine();
     if (ImGui::Button(ICON_FA_PENCIL "##EditPath")) {
       editablePath=path;
@@ -1622,6 +1692,10 @@ bool FurnaceFilePicker::draw(ImGuiWindowFlags winFlags) {
       ImGui::TextUnformatted(_("Loading..."));
     }
 
+#ifdef __EMSCRIPTEN__
+    ImGui::TextDisabled(_("Browser workspace: import files here, then download saved exports back to your device."));
+#endif
+
     if (acknowledged) {
       if (!chosenEntries.empty()) {
         if (chosenEntries.size()==1 && chosenEntries[0]->isDir) {
@@ -1824,7 +1898,7 @@ bool FurnaceFilePicker::open(String name, String pa, String hint, int flags, con
   }
   curFilterType=0;
 
-  selectCallback=selCallback;
+  selCallback=selectCallback;
 
   if (!isSearch || windowName!=name) {
     if (isSearch) this->filter="";

@@ -136,6 +136,8 @@ extern "C" {
 #endif
 #ifdef __EMSCRIPTEN__
 #include <emscripten/em_js.h>
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
 #endif
 #undef Status // X11 headers are leaking this.
 
@@ -390,7 +392,16 @@ static void ImGui_ImplSDL2_UpdateKeyModifiers(SDL_Keymod sdl_key_mods)
 
 static ImGuiViewport* ImGui_ImplSDL2_GetViewportForWindowID(Uint32 window_id)
 {
-    return ImGui::FindViewportByPlatformHandle((void*)(intptr_t)window_id);
+    ImGuiViewport* viewport = ImGui::FindViewportByPlatformHandle((void*)(intptr_t)window_id);
+#ifdef __EMSCRIPTEN__
+    if (viewport == nullptr)
+    {
+        ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+        if (window_id == 0 || platform_io.Viewports.Size <= 1)
+            viewport = ImGui::GetMainViewport();
+    }
+#endif
+    return viewport;
 }
 
 // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
@@ -451,6 +462,16 @@ bool ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event)
         {
             if (ImGui_ImplSDL2_GetViewportForWindowID(event->button.windowID) == nullptr)
                 return false;
+            ImVec2 mouse_pos((float)event->button.x, (float)event->button.y);
+            if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable)
+            {
+                int window_x, window_y;
+                SDL_GetWindowPosition(SDL_GetWindowFromID(event->button.windowID), &window_x, &window_y);
+                mouse_pos.x += window_x;
+                mouse_pos.y += window_y;
+            }
+            mouse_pos.x *= io.InputScale;
+            mouse_pos.y *= io.InputScale;
             int mouse_button = -1;
             if (event->button.button == SDL_BUTTON_LEFT) { mouse_button = 0; }
             if (event->button.button == SDL_BUTTON_RIGHT) { mouse_button = 1; }
@@ -460,6 +481,7 @@ bool ImGui_ImplSDL2_ProcessEvent(const SDL_Event* event)
             if (mouse_button == -1)
                 break;
             io.AddMouseSourceEvent(event->button.which == SDL_TOUCH_MOUSEID ? ImGuiMouseSource_TouchScreen : ImGuiMouseSource_Mouse);
+            io.AddMousePosEvent(mouse_pos.x, mouse_pos.y);
             io.AddMouseButtonEvent(mouse_button, (event->type == SDL_MOUSEBUTTONDOWN));
             bd->MouseButtonsDown = (event->type == SDL_MOUSEBUTTONDOWN) ? (bd->MouseButtonsDown | (1 << mouse_button)) : (bd->MouseButtonsDown & ~(1 << mouse_button));
             return true;
@@ -737,6 +759,12 @@ static void ImGui_ImplSDL2_UpdateMouseData()
     ImGui_ImplSDL2_Data* bd = ImGui_ImplSDL2_GetBackendData();
     ImGuiIO& io = ImGui::GetIO();
 
+#ifdef FURNACE_WEB_BROWSER
+    IM_UNUSED(bd);
+    IM_UNUSED(io);
+    return;
+#endif
+
     // We forward mouse input when hovered or captured (via SDL_MOUSEMOTION) or when focused (below)
 #if SDL_HAS_CAPTURE_AND_GLOBAL_MOUSE
     // - SDL_CaptureMouse() let the OS know e.g. that our drags can extend outside of parent boundaries (we want updated position) and shouldn't trigger other operations outside.
@@ -1000,6 +1028,50 @@ static void ImGui_ImplSDL2_UpdateMonitors()
     }
 }
 
+#ifdef __EMSCRIPTEN__
+static bool ImGui_ImplSDL2_GetEmscriptenCanvasMetrics(int* out_w, int* out_h, int* out_display_w, int* out_display_h)
+{
+    static const char* canvas_selector = "#furnace-canvas";
+    int display_w = 0, display_h = 0;
+    double css_w = 0.0, css_h = 0.0;
+
+    if (emscripten_get_canvas_element_size(canvas_selector, &display_w, &display_h) != EMSCRIPTEN_RESULT_SUCCESS)
+        display_w = display_h = 0;
+    if (emscripten_get_element_css_size(canvas_selector, &css_w, &css_h) != EMSCRIPTEN_RESULT_SUCCESS)
+        css_w = css_h = 0.0;
+
+    if ((display_w <= 0 || display_h <= 0) && css_w > 0.0 && css_h > 0.0)
+    {
+        double dpr = emscripten_get_device_pixel_ratio();
+        if (dpr <= 0.0)
+            dpr = 1.0;
+        display_w = (int)(css_w * dpr + 0.5);
+        display_h = (int)(css_h * dpr + 0.5);
+        if (display_w < 1) display_w = 1;
+        if (display_h < 1) display_h = 1;
+        emscripten_set_canvas_element_size(canvas_selector, display_w, display_h);
+    }
+
+    if ((css_w <= 0.0 || css_h <= 0.0) && display_w > 0 && display_h > 0)
+    {
+        double dpr = emscripten_get_device_pixel_ratio();
+        if (dpr <= 0.0)
+            dpr = 1.0;
+        css_w = display_w / dpr;
+        css_h = display_h / dpr;
+    }
+
+    if (css_w <= 0.0 || css_h <= 0.0 || display_w <= 0 || display_h <= 0)
+        return false;
+
+    *out_w = (int)(css_w + 0.5);
+    *out_h = (int)(css_h + 0.5);
+    *out_display_w = display_w;
+    *out_display_h = display_h;
+    return true;
+}
+#endif
+
 static void ImGui_ImplSDL2_GetWindowSizeAndFramebufferScale(SDL_Window* window, SDL_Renderer* renderer, ImVec2* out_size, ImVec2* out_framebuffer_scale, int* out_w, int* out_h, int* out_display_w, int* out_display_h)
 {
     int w, h;
@@ -1019,6 +1091,10 @@ static void ImGui_ImplSDL2_GetWindowSizeAndFramebufferScale(SDL_Window* window, 
 #endif
     else
         SDL_GL_GetDrawableSize(window, &display_w, &display_h);
+#ifdef __EMSCRIPTEN__
+    if (w <= 0 || h <= 0 || display_w <= 0 || display_h <= 0)
+        ImGui_ImplSDL2_GetEmscriptenCanvasMetrics(&w, &h, &display_w, &display_h);
+#endif
     // tildearrow: don't set the size if it is 0
     if (out_size != nullptr && w > 0 && h > 0)
         *out_size = ImVec2((float)w, (float)h);

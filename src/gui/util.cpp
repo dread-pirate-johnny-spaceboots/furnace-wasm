@@ -32,6 +32,9 @@
 #endif
 
 String getHomeDir() {
+#ifdef __EMSCRIPTEN__
+  return "/persist/workspace/";
+#endif
 #ifdef IS_MOBILE
 
 #ifdef ANDROID

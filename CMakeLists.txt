@@ -109,6 +109,7 @@ else()
 endif()
 
 option(BUILD_GUI "Build the tracker (disable to build only a headless player)" ${BUILD_GUI_DEFAULT})
+option(FURNACE_WEB_BUILD_GUI "Build the furnace_gui_web browser GUI target" OFF)
 option(WITH_LOCALE "Use libintl for language support" ${WITH_LOCALE_DEFAULT})
 option(USE_RTMIDI "Build with MIDI support using RtMidi." ${USE_RTMIDI_DEFAULT})
 option(USE_SDL2 "Build with SDL2. Required to build with GUI." ${USE_SDL2_DEFAULT})
@@ -148,6 +149,12 @@ option(FORCE_CODEVIEW "Force -gcodeview on MinGW GCC" OFF)
 option(FLATPAK_WORKAROUNDS "Enable Flatpak-specific workaround for system file picker" OFF)
 option(NO_INTRO "Disable intro animation entirely" OFF)
 option(ORIG_NDS_CORE "Use original NDS emulation core (no acquireDirect)" OFF)
+
+if (EMSCRIPTEN AND FURNACE_WEB_BUILD_GUI)
+  add_compile_options(-pthread)
+  add_link_options(-pthread)
+endif()
+
 if (APPLE)
   option(FORCE_APPLE_BIN "Force enable binary installation to /bin" OFF)
   option(MAKE_BUNDLE "Make a bundle" OFF)
@@ -407,6 +414,11 @@ else()
   set(ENABLE_MPEG OFF CACHE BOOL "come on" FORCE)
   set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "come on" FORCE)
   add_subdirectory(extern/zlib EXCLUDE_FROM_ALL)
+  if (EMSCRIPTEN AND TARGET zlib AND TARGET zlibstatic)
+    # Emscripten downgrades shared libraries to static archives, so both zlib
+    # targets would otherwise try to emit libz.a and break Ninja generation.
+    set_target_properties(zlib PROPERTIES OUTPUT_NAME z-shared)
+  endif()
   list(APPEND DEPENDENCIES_INCLUDE_DIRS extern/zlib ${CMAKE_CURRENT_BINARY_DIR}/extern/zlib)
   list(APPEND DEPENDENCIES_LIBRARIES zlibstatic)
   message(STATUS "Using vendored zlib")
@@ -1405,5 +1417,74 @@ if (NOT ANDROID OR TERMUX)
 endif()
 
 target_compile_definitions(${FURNACE} PRIVATE ${DEPENDENCIES_DEFINES})
+
+if (FURNACE_WEB_BUILD_GUI)
+  if (NOT EMSCRIPTEN)
+    message(FATAL_ERROR "FURNACE_WEB_BUILD_GUI requires an Emscripten toolchain")
+  endif()
+  if (NOT BUILD_GUI)
+    message(FATAL_ERROR "FURNACE_WEB_BUILD_GUI requires BUILD_GUI=ON")
+  endif()
+  if (NOT USE_SDL2)
+    message(FATAL_ERROR "FURNACE_WEB_BUILD_GUI requires USE_SDL2=ON")
+  endif()
+  if (NOT WITH_RENDER_OPENGL)
+    message(FATAL_ERROR "FURNACE_WEB_BUILD_GUI requires WITH_RENDER_OPENGL=ON")
+  endif()
+
+  set(FURNACE_GUI_WEB_SOURCES ${USED_SOURCES})
+  list(REMOVE_ITEM FURNACE_GUI_WEB_SOURCES src/main.cpp)
+  list(APPEND FURNACE_GUI_WEB_SOURCES
+    src/gui/webSupport.cpp
+    src/gui_web_main.cpp
+    src/gui_web_stubs.cpp
+  )
+
+  set(FURNACE_GUI_WEB_PRE_JS "${CMAKE_SOURCE_DIR}/src/gui_web_pre.js")
+
+  add_executable(furnace_gui_web ${FURNACE_GUI_WEB_SOURCES})
+  set_target_properties(furnace_gui_web PROPERTIES
+    SUFFIX ".js"
+    LINK_DEPENDS "${FURNACE_GUI_WEB_PRE_JS}"
+  )
+
+  target_include_directories(furnace_gui_web SYSTEM PRIVATE ${DEPENDENCIES_INCLUDE_DIRS})
+  target_compile_options(furnace_gui_web PRIVATE ${DEPENDENCIES_COMPILE_OPTIONS} -fexceptions -pthread)
+  target_link_libraries(furnace_gui_web PRIVATE ${DEPENDENCIES_LIBRARIES})
+  if (PKG_CONFIG_FOUND AND (SYSTEM_FMT OR SYSTEM_LIBSNDFILE OR SYSTEM_ZLIB OR SYSTEM_SDL2 OR SYSTEM_RTMIDI OR WITH_JACK))
+    if ("${CMAKE_VERSION}" VERSION_LESS "3.13")
+      target_link_libraries(furnace_gui_web PRIVATE ${DEPENDENCIES_LEGACY_LDFLAGS})
+    else()
+      target_link_directories(furnace_gui_web PRIVATE ${DEPENDENCIES_LIBRARY_DIRS})
+      target_link_options(furnace_gui_web PRIVATE ${DEPENDENCIES_LINK_OPTIONS})
+    endif()
+  endif()
+  target_compile_definitions(furnace_gui_web PRIVATE ${DEPENDENCIES_DEFINES} FURNACE_WEB_BROWSER=1)
+  target_link_options(furnace_gui_web PRIVATE
+    "--pre-js" "${FURNACE_GUI_WEB_PRE_JS}"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/instruments@/assets/furnace/instruments"
+    "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/wavetables@/assets/furnace/wavetables"
+    "-O2"
+    "-fexceptions"
+    "-lidbfs.js"
+    "-pthread"
+    "-sALLOW_MEMORY_GROWTH=1"
+    "-sDISABLE_EXCEPTION_CATCHING=0"
+    "-sENVIRONMENT=web,worker"
+    "-sEXIT_RUNTIME=0"
+    "-sEXPORT_ES6=1"
+    "-sEXPORTED_FUNCTIONS=['_main','_furnace_gui_web_mouse_move','_furnace_gui_web_mouse_down','_furnace_gui_web_mouse_up','_furnace_gui_web_mouse_wheel','_furnace_gui_web_mouse_leave']"
+    "-sEXPORTED_RUNTIME_METHODS=['FS']"
+    "-sEXPORT_NAME=createFurnaceGuiModule"
+    "-sFORCE_FILESYSTEM=1"
+    "-sINITIAL_MEMORY=134217728"
+    "-sMAXIMUM_MEMORY=1073741824"
+    "-sMODULARIZE=1"
+    "-sPTHREAD_POOL_SIZE=4"
+    "-sSTACK_SIZE=8388608"
+    "-sUSE_PTHREADS=1"
+    "-sWASM=1"
+  )
+endif()
 
 message(STATUS "License: ${FURNACE_LICENSE}")

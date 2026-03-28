@@ -32,6 +32,7 @@
 #include "filePlayer.h"
 #include "../audio/taAudio.h"
 #include "blip_buf.h"
+#include <atomic>
 #include <functional>
 #include <initializer_list>
 #include <thread>
@@ -354,8 +355,8 @@ class DivEngine {
   bool extValuePresent;
   bool repeatPattern;
   bool metronome;
-  bool exporting;
-  bool stopExport;
+  std::atomic<bool> exporting;
+  std::atomic<bool> stopExport;
   bool halted;
   bool forceMono;
   bool clampSamples;
@@ -552,6 +553,7 @@ class DivEngine {
   bool initAudioBackend();
   bool deinitAudioBackend(bool dueToSwitchMaster=false);
 
+  void ensureSystemRegistry();
   void registerSystems();
   void registerROMExports();
   void initSongWithDesc(const char* description, bool inBase64=true, bool oldVol=false);

@@ -827,12 +827,17 @@ void FurnaceGUI::drawSettings() {
         // SUBSECTION FILE
         CONFIG_SUBSECTION(_("File"));
 
+#ifdef __EMSCRIPTEN__
+        settings.sysFileDialog=0;
+        ImGui::TextDisabled(_("Browser build uses the internal workspace file picker."));
+#else
 #ifndef FLATPAK_WORKAROUNDS
         bool sysFileDialogB=settings.sysFileDialog;
         if (ImGui::Checkbox(_("Use system file picker"),&sysFileDialogB)) {
           settings.sysFileDialog=sysFileDialogB;
           settingsChanged=true;
         }
+#endif
 #endif
 
         if (ImGui::InputInt(_("Number of recent files"),&settings.maxRecentFile,1,5)) {
@@ -4942,8 +4947,12 @@ void FurnaceGUI::readConfig(DivConfig& conf, FurnaceGUISettingGroups groups) {
     settings.hiddenSystems=conf.getInt("hiddenSystems",0);
     settings.mswEnabled=conf.getInt("mswEnabled",0);
     settings.allowEditDocking=conf.getInt("allowEditDocking",1);
+#ifdef __EMSCRIPTEN__
+    settings.sysFileDialog=0;
+#else
 #ifndef FLATPAK_WORKAROUNDS
     settings.sysFileDialog=conf.getInt("sysFileDialog",SYS_FILE_DIALOG_DEFAULT);
+#endif
 #endif
     settings.displayAllInsTypes=conf.getInt("displayAllInsTypes",0);
 

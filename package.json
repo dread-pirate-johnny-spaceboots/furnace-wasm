@@ -1,0 +1,18 @@
+{
+  "name": "furnace-wasm",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "gui:dev": "node ./scripts/build-gui-web.mjs && vite --open /gui/",
+    "gui:build": "node ./scripts/build-gui-web.mjs && vite build",
+    "gui:build:pages": "node ./scripts/build-gui-web.mjs && vite build && node ./scripts/package-gui-pages.mjs",
+    "gui:preview": "npm run gui:build && vite preview --open /gui/"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "vite": "^7.1.7"
+  }
+}

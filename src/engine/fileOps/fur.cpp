@@ -18,6 +18,7 @@
  */
 
 #include "fileOpsCommon.h"
+#include <memory>
 
 short newFormatNotes[180]={
   12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, // -5
@@ -675,7 +676,8 @@ bool DivEngine::loadFur(unsigned char* file, size_t len, int variantID) {
   warnings="";
 
   try {
-    DivSong ds;
+    std::unique_ptr<DivSong> dsOwner(new DivSong);
+    DivSong& ds=*dsOwner;
     DivSubSong* subSong=ds.subsong[0];
 
     /// HEADER
@@ -897,6 +899,7 @@ bool DivEngine::loadFur(unsigned char* file, size_t len, int variantID) {
       
       logD("chips: (%d, %d channels)",ds.systemLen,ds.chans);
       for (int i=0; i<ds.systemLen; i++) {
+        ensureSystemRegistry();
         unsigned short sysID=reader.readS();
         if (sysID>0xff || sysID==0) {
           logE("unrecognized system ID %.4x",sysID);
@@ -1147,6 +1150,7 @@ bool DivEngine::loadFur(unsigned char* file, size_t len, int variantID) {
       logD("systems:");
       ds.systemLen=0;
       for (int i=0; i<DIV_MAX_CHIPS; i++) {
+        ensureSystemRegistry();
         unsigned char sysID=reader.readC();
         ds.system[i]=systemFromFileFur(sysID);
         ds.systemChans[i]=getChannelCount(ds.system[i]);
