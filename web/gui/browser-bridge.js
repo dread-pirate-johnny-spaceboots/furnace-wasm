@@ -112,12 +112,16 @@ const collectDirectoryEntries = (module, rootPath, relativePath, output) => {
 const collectPrefixEntries = (module, basePath, suffixMarker) => {
   const files = {}
   const parentDir = dirname(basePath)
-  const stem = basename(withoutExtension(basePath))
+  const prefixes = new Set(
+    [basename(basePath), basename(withoutExtension(basePath))]
+      .filter(Boolean)
+      .map(entry => `${entry}_${suffixMarker}`)
+  )
   for (const entry of module.FS.readdir(parentDir)) {
     if (entry === '.' || entry === '..') {
       continue
     }
-    if (!entry.startsWith(`${stem}_${suffixMarker}`)) {
+    if (![...prefixes].some(prefix => entry.startsWith(prefix))) {
       continue
     }
     const fullPath = parentDir === '/' ? `/${entry}` : `${parentDir}/${entry}`

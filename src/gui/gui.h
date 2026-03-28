@@ -1867,6 +1867,9 @@ class FurnaceGUI {
   double totalLength; // total length of render (songLength times num of files for per-channel export)
   float curProgress;
   int totalFiles;
+  bool pendingAudioExportDownload;
+  String pendingAudioExportPath;
+  DivAudioExportModes pendingAudioExportMode;
 
   struct Settings {
     bool settingsChanged;
@@ -3256,6 +3259,7 @@ class FurnaceGUI {
   void pushRecentFile(String path);
   void pushRecentSys(const char* path);
   void exportAudio(String path, DivAudioExportModes mode);
+  void finishAudioExportDownload();
   void exportCmdStream(bool target, String path);
   void delFirstBackup(String name);
 

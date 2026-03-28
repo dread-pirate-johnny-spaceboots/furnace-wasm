@@ -2953,7 +2953,17 @@ void FurnaceGUI::exportAudio(String path, DivAudioExportModes mode) {
   songLength=ts.totalTime.toDouble();
   double loopLength=songLength-(ts.loopStartTime.seconds+(double)ts.loopStartTime.micros/1000000.0);
 
-  e->saveAudio(path.c_str(),audioExportOptions);
+  audioExportOptions.mode=mode;
+  if (!e->saveAudio(path.c_str(),audioExportOptions)) {
+    pendingAudioExportDownload=false;
+    pendingAudioExportPath="";
+    pendingAudioExportMode=DIV_EXPORT_MODE_ONE;
+    showError(_("could not start audio export! open Log Viewer for more information."));
+    return;
+  }
+  pendingAudioExportDownload=true;
+  pendingAudioExportPath=path;
+  pendingAudioExportMode=mode;
 
   totalFiles=0;
   e->getTotalAudioFiles(totalFiles);
@@ -2969,6 +2979,37 @@ void FurnaceGUI::exportAudio(String path, DivAudioExportModes mode) {
 
   curProgress=0.0f;
   displayExporting=true;
+}
+
+void FurnaceGUI::finishAudioExportDownload() {
+#ifdef __EMSCRIPTEN__
+  if (!pendingAudioExportDownload || pendingAudioExportPath.empty()) {
+    return;
+  }
+
+  switch (pendingAudioExportMode) {
+    case DIV_EXPORT_MODE_ONE:
+      furnaceWebDownloadFile(pendingAudioExportPath.c_str());
+      break;
+    case DIV_EXPORT_MODE_MANY_SYS:
+    case DIV_EXPORT_MODE_MANY_CHAN: {
+      String basePath=pendingAudioExportPath;
+      String lowerCase=basePath;
+      for (char& c: lowerCase) {
+        if (c>='A' && c<='Z') c+='a'-'A';
+      }
+      size_t extPos=lowerCase.rfind(".wav");
+      if (extPos!=String::npos && extPos==lowerCase.size()-4) {
+        basePath=basePath.substr(0,extPos);
+      }
+      furnaceWebDownloadPrefix(basePath.c_str(),pendingAudioExportMode==DIV_EXPORT_MODE_MANY_SYS?"s":"c");
+      break;
+    }
+    default:
+      break;
+  }
+  furnaceWebFocusCanvas();
+#endif
 }
 
 void FurnaceGUI::exportCmdStream(bool target, String path) {
@@ -6828,12 +6869,17 @@ bool FurnaceGUI::loopFrame() {
       ImGui::ProgressBar(curProgress,ImVec2(320.0f*dpiScale,0),fmt::sprintf("%.2f%%",curProgress*100.0f).c_str());
 
       if (ImGui::Button(_("Abort"))) {
+        pendingAudioExportDownload=false;
         if (e->haltAudioFile()) {
           ImGui::CloseCurrentPopup();
         }
       }
       if (!e->isExporting()) {
         e->finishAudioFile();
+        finishAudioExportDownload();
+        pendingAudioExportDownload=false;
+        pendingAudioExportPath="";
+        pendingAudioExportMode=DIV_EXPORT_MODE_ONE;
         ImGui::CloseCurrentPopup();
       }
       ImGui::EndPopup();
@@ -9277,6 +9323,9 @@ FurnaceGUI::FurnaceGUI():
   totalLength(0.0),
   curProgress(0.0f),
   totalFiles(0),
+  pendingAudioExportDownload(false),
+  pendingAudioExportPath(""),
+  pendingAudioExportMode(DIV_EXPORT_MODE_ONE),
   localeRequiresJapanese(false),
   localeRequiresChinese(false),
   localeRequiresChineseTrad(false),
