@@ -39,6 +39,22 @@ const char* audioExportWavFormats[]={
   NULL
 };
 
+bool FurnaceGUI::isAudioExportFormatSupported(DivAudioExportFormats format) const {
+  switch (format) {
+    case DIV_EXPORT_FORMAT_WAV:
+      return true;
+    case DIV_EXPORT_FORMAT_OPUS:
+    case DIV_EXPORT_FORMAT_VORBIS:
+      return supportsOgg;
+    case DIV_EXPORT_FORMAT_FLAC:
+      return supportsFLAC;
+    case DIV_EXPORT_FORMAT_MPEG_L3:
+      return supportsMP3;
+    default:
+      return false;
+  }
+}
+
 void FurnaceGUI::drawExportAudio(bool onWindow) {
   exitDisabledTimer=1;
 
@@ -60,10 +76,17 @@ void FurnaceGUI::drawExportAudio(bool onWindow) {
   ImGui::Separator();
 
   if (audioExportOptions.mode!=DIV_EXPORT_MODE_MANY_SYS) {
+    if (!isAudioExportFormatSupported(audioExportOptions.format)) {
+      audioExportOptions.format=DIV_EXPORT_FORMAT_WAV;
+    }
     if (ImGui::BeginCombo(_("File Format"),audioExportFormats[audioExportOptions.format])) {
-      for (size_t i=0; i<(supportsMP3?5:4); i++) {
-        if (ImGui::Selectable(_(audioExportFormats[i]),audioExportOptions.format==i)) {
-          audioExportOptions.format=(DivAudioExportFormats)i;
+      for (size_t i=0; i<DIV_EXPORT_FORMAT_MPEG_L3+1; i++) {
+        DivAudioExportFormats format=(DivAudioExportFormats)i;
+        if (!isAudioExportFormatSupported(format)) {
+          continue;
+        }
+        if (ImGui::Selectable(_(audioExportFormats[i]),audioExportOptions.format==format)) {
+          audioExportOptions.format=format;
         }
       }
       ImGui::EndCombo();

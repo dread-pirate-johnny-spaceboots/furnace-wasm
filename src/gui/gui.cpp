@@ -8659,11 +8659,16 @@ bool FurnaceGUI::init() {
     if (strcmp(f.extension,"brr")==0) continue;
 
     // special treatment for Ogg and MPEG
-    if (strcmp(f.extension,"oga")==0) {
+    if (strcmp(f.extension,"oga")==0 || strcmp(f.extension,"ogg")==0 || strcmp(f.extension,"opus")==0) {
       supportsOgg=true;
       audioLoadFormats.push_back(f.name);
       audioLoadFormats.push_back("*.ogg *.oga *.opus");
       compatFormats+="*.ogg *.oga *.opus ";
+    } else if (strcmp(f.extension,"flac")==0) {
+      supportsFLAC=true;
+      audioLoadFormats.push_back(f.name);
+      audioLoadFormats.push_back("*.flac");
+      compatFormats+="*.flac ";
     } else if (strcmp(f.extension,"m1a")==0) {
       supportsMP3=true;
       audioLoadFormats.push_back(f.name);
@@ -9506,6 +9511,7 @@ FurnaceGUI::FurnaceGUI():
   queryReplaceVolDo(false),
   queryViewingResults(false),
   supportsOgg(false),
+  supportsFLAC(false),
   supportsMP3(false),
   wavePreviewOn(false),
   wavePreviewKey((SDL_Scancode)0),

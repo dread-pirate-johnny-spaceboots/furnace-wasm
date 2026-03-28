@@ -2549,7 +2549,7 @@ class FurnaceGUI {
   std::vector<FurnaceGUISysCategory> sysCategories;
 
   std::vector<String> audioLoadFormats;
-  bool supportsOgg, supportsMP3;
+  bool supportsOgg, supportsFLAC, supportsMP3;
 
   bool wavePreviewOn;
   SDL_Scancode wavePreviewKey;
@@ -3260,6 +3260,7 @@ class FurnaceGUI {
   void pushRecentSys(const char* path);
   void exportAudio(String path, DivAudioExportModes mode);
   void finishAudioExportDownload();
+  bool isAudioExportFormatSupported(DivAudioExportFormats format) const;
   void exportCmdStream(bool target, String path);
   void delFirstBackup(String name);
 
