@@ -5331,16 +5331,10 @@ bool FurnaceGUI::loopFrame() {
         }
         ImGui::Separator();
         if (ImGui::MenuItem(_("save"),BIND_FOR(GUI_ACTION_SAVE))) {
-          if (curFileName=="" || (curFileName.find(backupPath)==0) || e->song.version>=0xff00) {
-            openFileDialog(GUI_FILE_SAVE);
-          } else {
-            if (save(curFileName,e->song.isDMF?e->song.version:0)>0) {
-              showError(fmt::sprintf(_("Error while saving file! (%s)"),lastError));
-            }
-          }
+          doAction(GUI_ACTION_SAVE);
         }
         if (ImGui::MenuItem(_("save as..."),BIND_FOR(GUI_ACTION_SAVE_AS))) {
-          openFileDialog(GUI_FILE_SAVE);
+          doAction(GUI_ACTION_SAVE_AS);
         }
         ImGui::Separator();
         if (settings.exportOptionsLayout==0) {
@@ -6131,7 +6125,10 @@ bool FurnaceGUI::loopFrame() {
               if (save(copyOfName,0)>0) {
                 showError(fmt::sprintf(_("Error while saving file! (%s)"),lastError));
                 saveWasSuccessful=false;
+              } else if (pendingSongSaveDownload) {
+                downloadSavedFile(copyOfName);
               }
+              pendingSongSaveDownload=false;
               if (saveWasSuccessful && postWarnAction!=GUI_WARN_GENERIC) {
                 switch (postWarnAction) {
                   case GUI_WARN_QUIT:
@@ -6749,6 +6746,9 @@ bool FurnaceGUI::loopFrame() {
           }
           curFileDialog=GUI_FILE_OPEN;
         }
+      }
+      if (curFileDialog==GUI_FILE_SAVE && !fileDialog->accepted()) {
+        pendingSongSaveDownload=false;
       }
       fileDialog->close();
       postWarnAction=GUI_WARN_GENERIC;
@@ -9347,6 +9347,7 @@ FurnaceGUI::FurnaceGUI():
   totalLength(0.0),
   curProgress(0.0f),
   totalFiles(0),
+  pendingSongSaveDownload(false),
   pendingAudioExportDownload(false),
   pendingAudioExportPath(""),
   pendingAudioExportMode(DIV_EXPORT_MODE_ONE),

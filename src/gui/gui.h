@@ -1867,6 +1867,7 @@ class FurnaceGUI {
   double totalLength; // total length of render (songLength times num of files for per-channel export)
   float curProgress;
   int totalFiles;
+  bool pendingSongSaveDownload;
   bool pendingAudioExportDownload;
   String pendingAudioExportPath;
   DivAudioExportModes pendingAudioExportMode;

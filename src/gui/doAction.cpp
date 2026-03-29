@@ -55,15 +55,21 @@ void FurnaceGUI::doAction(int what) {
       }
       break;
     case GUI_ACTION_SAVE:
+      pendingSongSaveDownload=true;
       if (curFileName=="" || curFileName==backupPath || e->song.version>=0xff00) {
         openFileDialog(GUI_FILE_SAVE);
       } else {
         if (save(curFileName,e->song.isDMF?e->song.version:0)>0) {
+          pendingSongSaveDownload=false;
           showError(fmt::sprintf(_("Error while saving file! (%s)"),lastError));
+        } else {
+          downloadSavedFile(curFileName);
+          pendingSongSaveDownload=false;
         }
       }
       break;
     case GUI_ACTION_SAVE_AS:
+      pendingSongSaveDownload=true;
       openFileDialog(GUI_FILE_SAVE);
       break;
     case GUI_ACTION_EXPORT:
