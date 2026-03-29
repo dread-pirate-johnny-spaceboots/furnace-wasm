@@ -2989,7 +2989,7 @@ void FurnaceGUI::finishAudioExportDownload() {
 
   switch (pendingAudioExportMode) {
     case DIV_EXPORT_MODE_ONE:
-      furnaceWebDownloadFile(pendingAudioExportPath.c_str());
+      downloadSavedFile(pendingAudioExportPath);
       break;
     case DIV_EXPORT_MODE_MANY_SYS:
     case DIV_EXPORT_MODE_MANY_CHAN: {
@@ -3003,12 +3003,24 @@ void FurnaceGUI::finishAudioExportDownload() {
         basePath=basePath.substr(0,extPos);
       }
       furnaceWebDownloadPrefix(basePath.c_str(),pendingAudioExportMode==DIV_EXPORT_MODE_MANY_SYS?"s":"c");
+      furnaceWebFocusCanvas();
       break;
     }
     default:
       break;
   }
+#endif
+}
+
+void FurnaceGUI::downloadSavedFile(const String& path) {
+#ifdef __EMSCRIPTEN__
+  if (path.empty()) {
+    return;
+  }
+  furnaceWebDownloadFile(path.c_str());
   furnaceWebFocusCanvas();
+#else
+  (void)path;
 #endif
 }
 
@@ -6156,12 +6168,16 @@ bool FurnaceGUI::loopFrame() {
               logD("saving: %s",copyOfName.c_str());
               if (save(copyOfName,26)>0) {
                 showError(fmt::sprintf(_("Error while saving file! (%s)"),lastError));
+              } else {
+                downloadSavedFile(copyOfName);
               }
               break;
             case GUI_FILE_SAVE_DMF_LEGACY:
               logD("saving: %s",copyOfName.c_str());
               if (save(copyOfName,24)>0) {
                 showError(fmt::sprintf(_("Error while saving file! (%s)"),lastError));
+              } else {
+                downloadSavedFile(copyOfName);
               }
               break;
             case GUI_FILE_INS_SAVE:
@@ -6542,6 +6558,7 @@ bool FurnaceGUI::loopFrame() {
                   fwrite(w->getFinalBuf(),1,w->size(),f);
                   fclose(f);
                   pushRecentSys(copyOfName.c_str());
+                  downloadSavedFile(copyOfName);
                 } else {
                   showError(_("could not open file!"));
                 }
@@ -6624,6 +6641,7 @@ bool FurnaceGUI::loopFrame() {
                   fwrite(w->getFinalBuf(),1,w->size(),f);
                   fclose(f);
                   pushRecentSys(copyOfName.c_str());
+                  downloadSavedFile(copyOfName);
                 } else {
                   showError(_("could not open file!"));
                 }
@@ -7026,6 +7044,7 @@ bool FurnaceGUI::loopFrame() {
                 fwrite(csExportResult->getFinalBuf(),1,csExportResult->size(),f);
                 fclose(f);
                 pushRecentSys(csExportPath.c_str());
+                downloadSavedFile(csExportPath);
               } else {
                 showError(_("could not open file!"));
               }

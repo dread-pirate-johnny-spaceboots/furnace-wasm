@@ -3260,6 +3260,7 @@ class FurnaceGUI {
   void pushRecentSys(const char* path);
   void exportAudio(String path, DivAudioExportModes mode);
   void finishAudioExportDownload();
+  void downloadSavedFile(const String& path);
   bool isAudioExportFormatSupported(DivAudioExportFormats format) const;
   void exportCmdStream(bool target, String path);
   void delFirstBackup(String name);
