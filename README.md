@@ -1,3 +1,11 @@
+# Oh no, who got all this Furnace in my web browser?
+
+This fork began life as a funny little goof, just to see if it'd work, but some people were interested in using it as a way to run Furnace on things like iPads so I'm making a go of delivering  Furnace web builds for dev245+.
+
+Available @ https://furnace.sinewright.com
+
+Once the next major release of Furnace hits I plan to move the dev builds to dev.furnace.sinewright.com, and keep the current stable release at furnace.sinewright.com.
+
 # Furnace (chiptune tracker)
 
 ![screenshot](papers/screenshot3.png)
